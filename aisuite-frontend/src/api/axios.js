@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API = axios.create({
-  baseURL: "http://localhost:5000", // change to your backend URL
+  baseURL: "https://ai-suite-9bvf.onrender.com", // change to your backend URL
 });
 
 // Attach JWT token automatically if present

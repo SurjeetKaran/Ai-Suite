@@ -14,12 +14,15 @@ const teamRoutes = require('./routes/team')
 
 const app = express();
 
-// CORS configuration for frontend at http://localhost:5173
 app.use(cors({
-    origin: 'http://localhost:5173',
-    methods: ['GET', 'POST', 'PUT', 'DELETE','PATCH'],
+    origin: [
+        "http://localhost:5173",
+        "https://aisuite-orcin.vercel.app"
+    ],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
     credentials: true
 }));
+
 
 app.use(express.json());
 
