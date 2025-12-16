@@ -23,7 +23,7 @@ const socialAuthRoutes = require("./routes/socialAuth");
 const smartmixRoutes = require("./routes/smartmix");
 const adminRoutes = require("./routes/admin");
 const teamRoutes = require("./routes/team");
-const ApiKeyRoutes = require("./routes/apikeys");
+const ApiKeyRoutes = require("./routes/apiKeys");
 
 const app = express();
 
