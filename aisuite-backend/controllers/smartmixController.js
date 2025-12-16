@@ -1,158 +1,273 @@
-
 const log = require('../utils/logger');
 const QueryHistory = require('../models/QueryHistory');
 const { smartMix } = require('../services/smartMixService');
 
 /**
- * POST /smartmix/process
- * Logic:
- * - Counter increments ONLY on New Chats.
- * - But if Counter >= 3, EVERYTHING is blocked (including replies).
+ * Provider map
  */
-exports.processSmartMix = async (req, res) => {
-    const { 
-        input, 
-        type, 
-        conversationId, 
-        activeModels = ['chatGPT', 'gemini', 'claude'] 
-    } = req.body; 
-
-    const user = req.user;
-    const isNewChat = !conversationId;
-
-    log('INFO', `[Controller] Request from: ${user.email} | New Chat: ${isNewChat}`);
-
-    try {
-        // 1️⃣ CHECK DAILY LIMIT (For New Chats)
-        if (user.subscription === 'Free' && user.dailyQueryCount >= 3 && isNewChat) {
-            log('WARN', `[Controller] 🛑 Free limit hit for ${user.email} (Blocked New Chat)`);
-            return res.status(403).json({ 
-                msg: 'Daily limit reached. You can reply to existing chats, but cannot start new ones.' 
-            });
-        }
-
-        // 2️⃣ Fetch Context
-        let historyDoc;
-        let historyContext = []; 
-
-        if (conversationId) {
-            historyDoc = await QueryHistory.findOne({ _id: conversationId, userId: user._id });
-            
-            if (historyDoc) {
-                // 🔴 NEW: CHECK CONVERSATION LENGTH LIMIT (For Replies)
-                if (user.subscription === 'Free') {
-                    const userMessageCount = historyDoc.messages.filter(m => m.role === 'user').length;
-                    if (userMessageCount >= 10) {
-                        log('WARN', `[Controller] 🛑 Chat length limit hit for ${user.email}`);
-                        return res.status(403).json({ 
-                            msg: 'Free conversation limit reached (10 messages). Upgrade to Pro to continue.' 
-                        });
-                    }
-                }
-
-                historyContext = historyDoc.messages.map(msg => ({
-                    role: msg.role,
-                    content: msg.content 
-                }));
-                log('INFO', `[Controller] 🔄 Continuing conversation: ${conversationId}`);
-            } else {
-                // Edge Case: Invalid ID sent
-                if (user.subscription === 'Free' && user.dailyQueryCount >= 3) {
-                     return res.status(403).json({ msg: 'Limit reached.' });
-                }
-            }
-        }
-
-        // 3️⃣ Call Service
-        const results = await smartMix(input, type, historyContext, activeModels);
-
-        // 4️⃣ Save to Database
-        if (!historyDoc) {
-            historyDoc = new QueryHistory({
-                userId: user._id,
-                moduleType: type,
-                title: input.substring(0, 30) + "...", 
-                messages: []
-            });
-            log('INFO', `[Controller] ✨ Created new conversation`);
-        }
-
-        const mainContent = results.gemini || Object.values(results)[0] || "No output generated";
-
-        historyDoc.messages.push({ role: 'user', content: input });
-        historyDoc.messages.push({ 
-            role: 'assistant', 
-            content: mainContent,      
-            individualOutputs: results 
-        });
-
-        historyDoc.lastUpdated = Date.now();
-        await historyDoc.save();
-
-        // 5️⃣ Update User Stats (Only increment daily counter for NEW chats)
-        if (user.subscription === 'Free' && isNewChat) {
-            user.dailyQueryCount += 1;
-            await user.save();
-            log('INFO', `[Controller] Incremented daily count to ${user.dailyQueryCount}`);
-        }
-
-        res.json({
-            conversationId: historyDoc._id,
-            outputs: results 
-        });
-
-    } catch (err) {
-        log('ERROR', '[Controller] 💥 Processing failed', err.message);
-        res.status(500).json({ msg: 'Processing failed', error: err.message });
-    }
+const MODEL_TO_PROVIDER = {
+  chatGPT: 'openai',
+  gpt: 'openai',
+  claude: 'anthropic',
+  gemini: 'google',
+  groq: 'groq'
 };
 
-exports.getConversationById = async (req, res) => {
-    const { id } = req.params;
+// ✅ SINGLE SOURCE OF TRUTH FOR MODELS
+const ALL_MODELS = ["chatGPT", "gemini", "claude"];
+
+/**
+ * Generate conversation title from first user input
+ */
+function generateTitleFromInput(input) {
+  return input
+    .replace(/\n/g, " ")
+    .trim()
+    .slice(0, 60) + (input.length > 60 ? "..." : "");
+}
+
+/**
+ * Normalize output
+ */
+function normalizeOutputEntry(entry) {
+  const empty = {
+    text: '',
+    total: 0,
+    modelTokens: {},
+    providerTokens: {}
+  };
+
+  if (entry == null) return empty;
+  if (typeof entry === 'string') return { ...empty, text: entry };
+
+  const text = entry.text || entry.output || entry.result || entry.message || '';
+  const total =
+    typeof entry.totalTokens === 'number' ? entry.totalTokens :
+    typeof entry.tokensUsed === 'number' ? entry.tokensUsed :
+    typeof entry.total === 'number' ? entry.total :
+    0;
+
+  return {
+    text,
+    total,
+    modelTokens: entry.modelTokens || {},
+    providerTokens: entry.providerTokens || {}
+  };
+}
+
+/**
+ * Aggregate token data
+ */
+function aggregateTokenData(normalizedOutputs) {
+  const agg = {
+    totalTokens: 0,
+    modelTokens: {},
+    providerTokens: {}
+  };
+
+  for (const modelKey of Object.keys(normalizedOutputs)) {
+    const n = normalizedOutputs[modelKey];
+    if (!n) continue;
+
+    agg.totalTokens += n.total || 0;
+
+    if (n.modelTokens && Object.keys(n.modelTokens).length) {
+      for (const mk of Object.keys(n.modelTokens)) {
+        agg.modelTokens[mk] = (agg.modelTokens[mk] || 0) + n.modelTokens[mk];
+      }
+    } else {
+      agg.modelTokens[modelKey] = (agg.modelTokens[modelKey] || 0) + n.total;
+    }
+
+    if (n.providerTokens && Object.keys(n.providerTokens).length) {
+      for (const pk of Object.keys(n.providerTokens)) {
+        agg.providerTokens[pk] = (agg.providerTokens[pk] || 0) + n.providerTokens[pk];
+      }
+    } else {
+      const provider = MODEL_TO_PROVIDER[modelKey] || 'unknown';
+      agg.providerTokens[provider] = (agg.providerTokens[provider] || 0) + n.total;
+    }
+  }
+
+  return agg;
+}
+
+/**
+ * POST /smartmix/process
+ */
+exports.processSmartMix = async (req, res) => {
+  try {
+    const { input, type } = req.body;
     const userId = req.user._id;
 
-    log('INFO', `[Controller] Fetching conversation details...`, { conversationId: id, userId });
+    // 🔐 Sanitize activeModels
+    let activeModels = Array.isArray(req.body.activeModels)
+      ? req.body.activeModels.filter(m => ALL_MODELS.includes(m))
+      : ALL_MODELS;
 
-    try {
-        const conversation = await QueryHistory.findOne({ _id: id, userId });
+    if (!activeModels.length) activeModels = ALL_MODELS;
 
-        if (!conversation) {
-            log('WARN', `[Controller] Conversation not found or access denied`, { conversationId: id });
-            return res.status(404).json({ msg: 'Conversation not found' });
-        }
+    const isNewChat = !req.body.conversationId;
 
-        log('INFO', `[Controller] Conversation retrieved successfully`, { conversationId: id });
+    log("INFO", "[Controller] SmartMix request", {
+      user: req.user.email,
+      newChat: isNewChat,
+      activeModels
+    });
 
-        res.json({ conversation });
-    } catch (err) {
-        log('ERROR', 'Failed to fetch conversation details', err.message);
-        res.status(500).json({ msg: 'Server error' });
+    // --------------------------------------------------
+    // LOAD OR CREATE CONVERSATION
+    // (ownership + limits already validated by middleware)
+    // --------------------------------------------------
+    let conversation = req.conversation;
+
+    if (!conversation) {
+      conversation = new QueryHistory({
+        userId,
+        moduleType: type,
+        messages: []
+      });
     }
+
+    // --------------------------------------------------
+    // USER MESSAGE
+    // --------------------------------------------------
+    conversation.messages.push({
+      role: "user",
+      content: input,
+      timestamp: new Date(),
+      tokenUsage: {
+        total: 0,
+        modelTokens: {},
+        providerTokens: {}
+      }
+    });
+
+    // Set title only once (first message)
+    if (isNewChat && conversation.messages.length === 1) {
+      conversation.title = generateTitleFromInput(input);
+    }
+
+    // --------------------------------------------------
+    // SMARTMIX PROCESSING
+    // --------------------------------------------------
+    const rawOutputs = await smartMix(
+      input,
+      type,
+      conversation.messages,
+      activeModels
+    );
+
+    // Normalize outputs
+    const normalized = {};
+    for (const modelKey of activeModels) {
+      normalized[modelKey] = normalizeOutputEntry(rawOutputs?.[modelKey]);
+    }
+
+    const aggregated = aggregateTokenData(normalized);
+
+    // --------------------------------------------------
+    // ASSISTANT MESSAGE
+    // --------------------------------------------------
+    conversation.messages.push({
+      role: "assistant",
+      content: "AI Response",
+      individualOutputs: rawOutputs || {},
+      timestamp: new Date(),
+      tokenUsage: {
+        total: aggregated.totalTokens,
+        modelTokens: aggregated.modelTokens,
+        providerTokens: aggregated.providerTokens
+      }
+    });
+
+    // --------------------------------------------------
+    // CONVERSATION-LEVEL AGGREGATION
+    // --------------------------------------------------
+    conversation.lastUpdated = new Date();
+    conversation.totalTokens =
+      (conversation.totalTokens || 0) + aggregated.totalTokens;
+
+    conversation.modelTokens = conversation.modelTokens || {};
+    for (const mk of Object.keys(aggregated.modelTokens)) {
+      conversation.modelTokens[mk] =
+        (conversation.modelTokens[mk] || 0) + aggregated.modelTokens[mk];
+    }
+
+    conversation.providerTokens = conversation.providerTokens || {};
+    for (const pk of Object.keys(aggregated.providerTokens)) {
+      conversation.providerTokens[pk] =
+        (conversation.providerTokens[pk] || 0) + aggregated.providerTokens[pk];
+    }
+
+    await conversation.save();
+
+    // --------------------------------------------------
+    // RESPONSE
+    // --------------------------------------------------
+    return res.json({
+      conversationId: conversation._id,
+      outputs: rawOutputs,
+      tokenSummary: {
+        totalTokens: aggregated.totalTokens,
+        modelTokens: aggregated.modelTokens,
+        providerTokens: aggregated.providerTokens
+      }
+    });
+
+  } catch (err) {
+    log("ERROR", "[Controller] SmartMix failed", {
+      error: err.message,
+      stack: err.stack
+    });
+
+    return res.status(500).json({
+      msg: "SmartMix failed",
+      error: err.message
+    });
+  }
+};
+
+
+/**
+ * GET /smartmix/history/:id
+ */
+exports.getConversationById = async (req, res) => {
+  try {
+    const conversation = await QueryHistory.findOne({
+      _id: req.params.id,
+      userId: req.user._id
+    });
+
+    if (!conversation) {
+      return res.status(404).json({ msg: "Conversation not found" });
+    }
+
+    res.json({ conversation });
+  } catch (err) {
+    log("ERROR", "Get conversation failed", err);
+    res.status(500).json({ msg: "Server error" });
+  }
 };
 
 /**
  * DELETE /smartmix/history/:id
- * Deletes a specific conversation by ID
  */
 exports.deleteConversationById = async (req, res) => {
-    const { id } = req.params;
-    const userId = req.user._id;
+  try {
+    const deleted = await QueryHistory.findOneAndDelete({
+      _id: req.params.id,
+      userId: req.user._id
+    });
 
-    log('INFO', `[Controller] Attempting to delete conversation: ${id}`, { userId });
-
-    try {
-        const result = await QueryHistory.findOneAndDelete({ _id: id, userId });
-
-        if (!result) {
-            log('WARN', `[Controller] Delete failed - Chat not found`, { conversationId: id });
-            return res.status(404).json({ msg: 'Conversation not found or unauthorized' });
-        }
-
-        log('INFO', `[Controller] Conversation deleted successfully`, { conversationId: id });
-        res.json({ msg: 'Conversation deleted successfully', id });
-
-    } catch (err) {
-        log('ERROR', 'Failed to delete conversation', err.message);
-        res.status(500).json({ msg: 'Server error' });
+    if (!deleted) {
+      return res.status(404).json({ msg: "Conversation not found or unauthorized" });
     }
+
+    res.json({ msg: "Conversation deleted successfully", id: req.params.id });
+  } catch (err) {
+    log("ERROR", "Delete conversation failed", err);
+    res.status(500).json({ msg: "Server error" });
+  }
 };
+

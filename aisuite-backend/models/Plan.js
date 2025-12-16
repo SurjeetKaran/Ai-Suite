@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const log = require('../utils/logger');
 
 const PlanSchema = new mongoose.Schema({
   name: { type: String, required: true, unique: true },   // Free, Pro, Team

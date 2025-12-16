@@ -4,6 +4,7 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import API from "../../api/axios";
+import log from "../../utils/logger";
 
 // Icons
 import {
@@ -31,7 +32,7 @@ export default function PlanManagement() {
       const res = await API.get("/admin/plan");
       setPlans(res.data);
     } catch (err) {
-      console.error("Failed to fetch plans:", err);
+      log('ERROR', 'Failed to fetch plans', err?.response?.data || err);
     }
   };
 
@@ -67,7 +68,8 @@ export default function PlanManagement() {
   };
 
   const handleDeleteClick = async (planId) => {
-    if(!window.confirm("Delete this plan?")) return;
+    const ok = await import('../../utils/dialogService').then(m => m.confirm("Delete this plan?"));
+    if (!ok) return;
     try {
       await API.delete(`/admin/plan/${planId}`);
       setPlans(prev => prev.filter(p => p._id !== planId));

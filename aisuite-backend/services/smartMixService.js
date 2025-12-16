@@ -1,117 +1,142 @@
-const Groq = require("groq-sdk");
-const { buildAllPrompts } = require("../utils/promptHelper.js");
-const log = require('../utils/logger');
+const { buildAllPrompts } = require("../utils/promptHelper");
+const log = require("../utils/logger");
 
-// Load Groq API key
-const groq = new Groq({
-    apiKey: process.env.GROQ_API_KEY
-});
+// Provider balancer
+const {
+  selectProvider,
+  updateProviderUsage
+} = require("../utils/providerBalancer");
 
-// Default Groq model you tested successfully
-const GROQ_MODEL = process.env.GROQ_MODEL;
+// Provider handlers
+const { callGroqProvider } = require("./providers/groqProvider");
+// const { callOpenAIProvider } = require("./providers/openaiProvider");
+// const { callClaudeProvider } = require("./providers/anthropicProvider");
 
-// ----------------------------------------
-// CALL GROQ API
-// ----------------------------------------
-async function callGroqAPI(prompt, label) {
-    log('INFO', `[Service] Calling GROQ for "${label}"...`);
+/**
+ * 🔥 ONE-TIME provider registry
+ * Add new providers HERE only (backend-only change)
+ */
+const providerHandlers = {
+  groq: callGroqProvider,
+  // openai: callOpenAIProvider,
+  // anthropic: callClaudeProvider,
+};
 
-    try {
-        const response = await groq.chat.completions.create({
-            model: GROQ_MODEL,
-            messages: [
-                { role: "user", content: prompt }
-            ]
-        });
-
-        const text = response.choices?.[0]?.message?.content || "";
-        log('INFO', `[Service] ✅ GROQ Success for "${label}"`);
-        return text;
-
-    } catch (error) {
-        log('ERROR', `[Service] ❌ GROQ Error for "${label}"`, error.message);
-        return `Error generating ${label} response.`;
-    }
-}
-
-
-// ----------------------------------------
-// MAIN SMART MIX
-// ----------------------------------------
+/**
+ * SmartMix returns:
+ * {
+ *   chatGPT: { text: "...", tokensUsed: 123 },
+ *   gemini:  { text: "...", tokensUsed: 55 },
+ *   claude:  { text: "...", tokensUsed: 88 }
+ * }
+ */
 async function smartMix(
-    input,
-    type = "text",
-    history = [],
-    activeModels = ['chatGPT', 'gemini', 'claude'] // <-- gemini now maps to Groq
+  input,
+  type = "text",
+  history = [],
+  activeModels = ["chatGPT", "gemini", "claude"]
 ) {
+  log("INFO", "[SmartMix] Started", {
+    type,
+    historyLength: history.length,
+    activeModels
+  });
 
-    log('INFO',
-        `[Service] Processing request. Type: "${type}", History: ${history.length}, Models: [${activeModels.join(', ')}]`
-    );
-
-    // 1️⃣ Prepare conversation history
-    let fullContextInput = input;
-
-    if (history && history.length > 0) {
-        let historyStr = "Conversation History:\n";
-        history.forEach(msg => {
-            historyStr += `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}\n`;
-        });
-
-        historyStr += `\nUser's New Question:\n${input}`;
-        fullContextInput = historyStr;
-
-        log('INFO', '[Service] History context appended.');
-    }
-
-    // 2️⃣ Build prompts
-    const prompts = buildAllPrompts(fullContextInput, type);
-
-    // 3️⃣ Model definitions now point to GROQ instead of Gemini
-    const modelDefinitions = {
-        chatGPT: { prompt: prompts.chatGPT, label: "ChatGPT" }, // still handled by groq for now
-        gemini:  { prompt: prompts.gemini,  label: "Groq" },    // gemini slot replaced by Groq
-        claude:  { prompt: prompts.claude,  label: "Claude" }   // still optional
-    };
-
-    const promises = [];
-    const keys = [];
-
-    // Map all calls to Groq
-    activeModels.forEach(modelKey => {
-        if (modelDefinitions[modelKey]) {
-            const def = modelDefinitions[modelKey];
-            promises.push(callGroqAPI(def.prompt, def.label)); // ALWAYS Groq
-            keys.push(modelKey);
-        }
+  // 1️⃣ Add conversation history
+  let finalInput = input;
+  if (history?.length > 0) {
+    let combined = "Conversation History:\n";
+    history.forEach(msg => {
+      combined += `${msg.role === "user" ? "User" : "Assistant"}: ${msg.content}\n`;
     });
+    combined += `\nUser's New Question:\n${input}`;
+    finalInput = combined;
+  }
 
-    // 4️⃣ Execute calls in parallel
-    const startTime = Date.now();
-    const finalResults = {};
+  // 2️⃣ Prepare prompts
+  const prompts = buildAllPrompts(finalInput, type);
+  const outputs = {};
 
-    try {
-        if (promises.length === 0) {
-            log('WARN', '[Service] No valid models selected in activeModels array.');
-            return {};
+  // 3️⃣ Process each active model
+  for (const model of activeModels) {
+    const prompt = prompts[model];
+    if (!prompt) continue;
+
+    let result = null;
+    let lastError = null;
+    const triedProviders = new Set();
+
+    // 🔁 Provider-level failover loop
+    while (!result) {
+      let provider;
+
+      try {
+        provider = await selectProvider();
+
+        // Avoid retrying same provider
+        if (triedProviders.has(provider)) {
+          throw new Error("All providers already attempted");
         }
 
-        const responses = await Promise.all(promises);
+        triedProviders.add(provider);
 
-        responses.forEach((response, index) => {
-            const key = keys[index];
-            finalResults[key] = response;
+        const handler = providerHandlers[provider];
+        if (!handler) {
+          throw new Error(`No handler registered for provider: ${provider}`);
+        }
+
+        log("INFO", "[SmartMix] Provider selected", {
+          provider,
+          model
         });
 
-    } catch (error) {
-        log('ERROR', "[Service] Critical failure in parallel calls", error.message);
-        throw new Error(`AI processing failed: ${error.message}`);
+        // 🔥 Call provider
+        result = await handler(prompt, model);
+
+        // 🧮 Update provider token usage
+        await updateProviderUsage(provider, result.tokensUsed || 0);
+
+      } catch (err) {
+        lastError = err;
+
+        log("ERROR", "[SmartMix] Provider attempt failed", {
+          provider,
+          model,
+          error: err.message
+        });
+
+        // Stop retrying after all known providers attempted
+        if (triedProviders.size >= Object.keys(providerHandlers).length) {
+          break;
+        }
+      }
     }
 
-    const duration = Date.now() - startTime;
-    log('INFO', `[Service] 🏁 Generated ${keys.length} outputs in ${duration}ms`);
+    // Final fallback if all providers fail
+    if (!result) {
+      log("ERROR", "[SmartMix] All providers failed", {
+        model,
+        error: lastError?.message
+      });
 
-    return finalResults;
+      result = {
+        text: "All AI providers are temporarily unavailable. Please try again later.",
+        tokensUsed: 0
+      };
+    }
+
+    outputs[model] = {
+      text: result.text || "",
+      tokensUsed: result.tokensUsed || 0
+    };
+  }
+
+  log("INFO", "[SmartMix] Completed", {
+    modelCount: Object.keys(outputs).length
+  });
+
+  return outputs;
 }
 
 module.exports = { smartMix };
+

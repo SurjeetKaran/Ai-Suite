@@ -3,16 +3,11 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const log = require('../utils/logger');
 const QueryHistory = require('../models/QueryHistory');
-const Razorpay = require('razorpay');
+
 const crypto = require('crypto');
 const Team = require('../models/Team');
 const sendEmail = require('../utils/sendEmail');
-
-// ------------------- RAZORPAY INSTANCE -------------------
-const razorpayInstance = new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID,
-    key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+const { getRazorpayInstance } = require("../utils/razorpay");
 
 // ------------------- SIGNUP -------------------
 exports.signup = async (req, res) => {
@@ -171,6 +166,7 @@ exports.login = async (req, res) => {
 // ------------------- GET LOGGED-IN USER -------------------
 exports.getMe = async (req, res) => {
     try {
+    log('INFO', `GetMe requested by user ${req.user?._id || 'unknown'}`);
         const userId = req.user._id; // populated by auth middleware
         const user = await User.findById(userId).select(
             '_id name email subscription dailyQueryCount createdAt updatedAt'
@@ -190,6 +186,7 @@ exports.getMe = async (req, res) => {
 // ------------------- GET LOGGED-IN USER HISTORY -------------------
 exports.getHistory = async (req, res) => {
     try {
+    log('INFO', `GetHistory requested by user ${req.user?._id || 'unknown'}`);
         const userId = req.user._id;
         const user = await User.findById(userId).select('subscription');
         if (!user) return res.status(404).json({ msg: 'User not found' });
@@ -405,73 +402,146 @@ exports.resetPassword = async (req, res) => {
   }
 };
 
+
 // ------------------- CREATE RAZORPAY ORDER -------------------
+
 exports.createPaymentOrder = async (req, res) => {
-    try {
-        const { amount, currency, receipt } = req.body;
-        if (!amount) return res.status(400).json({ msg: 'Amount is required' });
+  try {
+    const razorpay = getRazorpayInstance();
 
-        const options = {
-            amount: parseInt(amount * 100), // convert rupees to paise
-            currency: currency || 'INR',
-            receipt: receipt || `receipt_${Date.now()}`,
-        };
-
-        const order = await razorpayInstance.orders.create(options);
-
-        if (!order) return res.status(500).json({ msg: 'Failed to create order' });
-
-        res.json({ order });
-    } catch (err) {
-        log('ERROR', 'Razorpay order creation failed', err.stack);
-        res.status(500).json({ msg: 'Payment order creation failed' });
+    if (!razorpay) {
+      return res.status(500).json({
+        msg: "Razorpay is not configured. Contact support or add keys in admin panel."
+      });
     }
+
+    const { amount, currency, receipt } = req.body;
+    if (!amount) return res.status(400).json({ msg: 'Amount is required' });
+
+    const options = {
+      amount: parseInt(amount * 100), // convert rupees to paise
+      currency: currency || 'INR',
+      receipt: receipt || `receipt_${Date.now()}`,
+    };
+
+    const order = await razorpay.orders.create(options);
+
+    if (!order) return res.status(500).json({ msg: 'Failed to create Razorpay order' });
+
+    res.json({ order });
+  } catch (err) {
+    log('ERROR', 'Razorpay order creation failed', err);
+    res.status(500).json({ msg: 'Payment order creation failed' });
+  }
 };
 
 // ------------------- VERIFY PAYMENT & UPGRADE SUBSCRIPTION -------------------
 exports.verifyPayment = async (req, res) => {
   try {
+    const razorpay = getRazorpayInstance();
+
+    if (!razorpay) {
+      return res.status(500).json({
+        msg: "Razorpay is not configured. Contact support or add keys in admin panel."
+      });
+    }
+
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
     const userId = req.user._id;
 
     if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
-      return res.status(400).json({ msg: 'Payment details missing' });
+      return res.status(400).json({ msg: "Payment details missing" });
     }
 
+    // Read secret dynamically
+    const secret =
+      (global.SystemEnv && global.SystemEnv.RAZORPAY_KEY_SECRET) ||
+      process.env.RAZORPAY_KEY_SECRET;
+
     const generated_signature = crypto
-      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-      .update(razorpay_order_id + '|' + razorpay_payment_id)
-      .digest('hex');
+      .createHmac("sha256", secret)
+      .update(razorpay_order_id + "|" + razorpay_payment_id)
+      .digest("hex");
 
     if (generated_signature !== razorpay_signature) {
-      return res.status(400).json({ msg: 'Invalid payment signature' });
+      return res.status(400).json({ msg: "Invalid payment signature" });
     }
 
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ msg: 'User not found' });
+    if (!user) return res.status(404).json({ msg: "User not found" });
 
-    // 🧩 Set plan details and expiry
+    // Upgrade subscription
     const now = new Date();
     const expiry = new Date(now);
     expiry.setDate(expiry.getDate() + 30);
 
-    user.subscription = 'Pro';
+    user.subscription = "Pro";
     user.subscribedAt = now;
     user.expiryDate = expiry;
     await user.save();
 
-    log('INFO', `User subscription upgraded to Pro`, { userId });
+    log("INFO", "User subscription upgraded to Pro", { userId });
 
     res.json({
-      msg: '✅ Payment verified successfully, subscription upgraded to Pro',
+      msg: "Payment verified successfully, subscription upgraded to Pro",
       subscription: user.subscription,
       expiryDate: expiry,
     });
   } catch (err) {
-    log('ERROR', 'Payment verification failed', err.stack, { userId: req.user?._id });
-    res.status(500).json({ msg: 'Payment verification failed' });
+    log("ERROR", "Payment verification failed", err);
+    res.status(500).json({ msg: "Payment verification failed" });
   }
 };
+
+// ------------------- DELETE MY ACCOUNT -------------------
+exports.deleteMe = async (req, res) => {
+  const userId = req.user?._id;
+
+  if (!userId) {
+    log('WARN', 'DeleteMe attempted without authenticated user');
+    return res.status(401).json({ msg: 'Unauthorized' });
+  }
+
+  log('INFO', `DeleteMe requested`, { userId });
+
+  try {
+    // 1️⃣ Check user exists
+    const user = await User.findById(userId);
+    if (!user) {
+      log('WARN', 'DeleteMe failed: user not found', { userId });
+      return res.status(404).json({ msg: 'User not found' });
+    }
+
+    // 🚫 Safety check (optional but recommended)
+    if (user.email === process.env.ADMIN_EMAIL) {
+      log('WARN', 'Attempt to delete admin account blocked', { userId });
+      return res.status(403).json({ msg: 'Admin account cannot be deleted' });
+    }
+
+    // 2️⃣ Delete all chat history
+    const historyResult = await QueryHistory.deleteMany({ userId });
+    log('INFO', 'User chat history deleted', {
+      userId,
+      deletedCount: historyResult.deletedCount
+    });
+
+    // 3️⃣ Delete user account
+    await User.findByIdAndDelete(userId);
+    log('INFO', 'User account deleted successfully', { userId });
+
+    // 4️⃣ Respond
+    res.json({
+      success: true,
+      msg: 'Your account and all associated data have been permanently deleted.'
+    });
+
+  } catch (err) {
+    log('ERROR', 'DeleteMe failed', err.stack, { userId });
+    res.status(500).json({ msg: 'Failed to delete account' });
+  }
+};
+
+
 
 
 

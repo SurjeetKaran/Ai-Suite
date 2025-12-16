@@ -1,3 +1,5 @@
+
+
 import React, { useEffect, useState } from "react";
 import Sidebar from "../components/Sidebar";
 import ChatWindow from "../components/ChatWindow";
@@ -5,91 +7,175 @@ import ChatInput from "../components/ChatInput";
 import { useAuthStore } from "../store/authStore";
 import { useChatStore } from "../store/chatStore";
 import LoadingSpinner from "../components/LoadingSpinner";
+import { ChevronDownIcon } from "@heroicons/react/24/solid";
+import log from "../utils/logger";
 
-// Icons for Toggles
-import { BoltIcon, SparklesIcon, CubeTransparentIcon } from "@heroicons/react/24/solid";
-
-const MODEL_OPTIONS = [
-  { id: "chatGPT", name: "ChatGPT 4o", icon: <BoltIcon className="w-4 h-4" />, color: "text-green-400" },
-  { id: "gemini", name: "Gemini 2.0", icon: <SparklesIcon className="w-4 h-4" />, color: "text-blue-400" },
-  { id: "claude", name: "Claude 3.5", icon: <CubeTransparentIcon className="w-4 h-4" />, color: "text-orange-400" },
-];
+/**
+ * =====================================================
+ * DASHBOARD
+ * =====================================================
+ * - App shell
+ * - Handles bootstrapping
+ * - Model selector (single vs multi model)
+ * - Layout composition
+ */
 
 export default function Dashboard() {
-  const fetchUser = useAuthStore((state) => state.fetchUser);
-  const { activeModels, toggleModel } = useChatStore();
+  /* =====================================================
+   * STORES
+   * ===================================================== */
+  const fetchUser = useAuthStore((s) => s.fetchUser);
+
+  const {
+    models,
+    activeModels,
+    selectModel,
+    resetModels,
+    sidebarOpen,
+    loadModels,
+  } = useChatStore();
+
+  /* =====================================================
+   * LOCAL UI STATE
+   * ===================================================== */
   const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(false);
 
+  /* =====================================================
+   * APP INITIALIZATION
+   * ===================================================== */
   useEffect(() => {
-    const initialize = async () => {
-      setLoading(true);
+    const init = async () => {
+      try {
+        log("INFO", "Dashboard init started");
 
-      // ✅ Wait for BOTH the API call AND a 5-second timer
-      await Promise.all([
-        fetchUser(), // Get user data
-        new Promise((resolve) => setTimeout(resolve, 5000)) // Force 5s delay
-      ]);
+        // 1️⃣ Fetch authenticated user
+        await fetchUser();
+        log("INFO", "User loaded");
 
-      setLoading(false);
+        // 2️⃣ Load available AI models
+        await loadModels();
+        log("INFO", "Models loaded");
+
+      } catch (err) {
+        log("ERROR", "Dashboard initialization failed", err);
+      } finally {
+        setLoading(false);
+        log("INFO", "Dashboard ready");
+      }
     };
-    initialize();
-  }, [fetchUser]);
 
-  if (loading) return <LoadingSpinner message="Initializing AiSuite..." />;
+    init();
+  }, [fetchUser, loadModels]);
 
+  /* =====================================================
+   * LOADING STATE
+   * ===================================================== */
+  if (loading) {
+    return <LoadingSpinner message="Initializing AiSuite..." />;
+  }
+
+  /* =====================================================
+   * DERIVED UI STATE
+   * ===================================================== */
+  const selectedModel =
+    activeModels.length === 1
+      ? models.find((m) => m.id === activeModels[0])
+      : null;
+
+  /* =====================================================
+   * RENDER
+   * ===================================================== */
   return (
-    <div className="flex h-screen bg-[#0B1120] text-white overflow-hidden font-sans">
-      
-      {/* 1. Sidebar (Fixed Width) */}
+    <div className="flex h-screen bg-[#0B1120] text-white overflow-hidden">
+      {/* ================= SIDEBAR ================= */}
       <Sidebar />
 
-      {/* 2. Main Content Area (Takes remaining width) */}
-      <div className="flex-1 flex flex-col h-full relative min-w-0">
-        
-        {/* ---------------- TOP BAR (Static Height) ---------------- */}
-        <header className="h-16 shrink-0 flex items-center justify-between px-6 border-b border-white/5 bg-[#0B1120] z-20">
-          <h1 className="text-lg font-bold tracking-wide text-gray-200 hidden md:block">
-            Dashboard
-          </h1>
+      {/* ================= MAIN CONTENT ================= */}
+      <div
+        className={`
+          flex-1 flex flex-col h-full
+          transition-all duration-300
+        `}
+      >
+        {/* ================= HEADER ================= */}
+        <header className="h-16 flex items-center justify-between px-6 border-b border-white/5 shrink-0">
+          {/* BRAND */}
+          
+          <span
+  className="
+    font-extrabold text-xl tracking-wide
+    bg-gradient-to-r from-indigo-400 to-purple-500
+    text-transparent bg-clip-text
+    animate-aisuite-glow
+  "
+>
+  AiSuite
+</span>
 
-          {/* Toggles Container */}
-          <div className="flex items-center gap-3 bg-white/5 p-1 rounded-xl border border-white/10">
-            {MODEL_OPTIONS.map((model) => {
-              const isActive = activeModels.includes(model.id);
-              return (
+
+          {/* MODEL SELECTOR */}
+          <div className="relative">
+            <button
+              onClick={() => setOpen((o) => !o)}
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-sm hover:bg-white/10 transition"
+            >
+              <span>
+                {selectedModel
+                  ? selectedModel.name
+                  : "All Models"}
+              </span>
+              <ChevronDownIcon
+                className={`w-4 h-4 transition-transform ${
+                  open ? "rotate-180" : ""
+                }`}
+              />
+            </button>
+
+            {open && (
+              <div className="absolute right-0 mt-2 w-56 bg-[#0f172a] border border-white/10 rounded-xl shadow-xl z-50 overflow-hidden">
+                {/* ALL MODELS */}
                 <button
-                  key={model.id}
-                  onClick={() => toggleModel(model.id)}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-300 ${
-                    isActive 
-                      ? "bg-white/10 text-white shadow-sm ring-1 ring-white/20" 
-                      : "text-gray-500 hover:text-gray-300"
-                  }`}
+                  onClick={() => {
+                    log("INFO", "Model selector → reset to all");
+                    resetModels();
+                    setOpen(false);
+                  }}
+                  className="w-full px-4 py-3 text-left text-sm hover:bg-white/5"
                 >
-                  <span className={isActive ? model.color : "grayscale opacity-50"}>
-                    {model.icon}
-                  </span>
-                  <span className={!isActive ? "opacity-0 w-0 overflow-hidden" : "opacity-100"}>
-                    {model.name}
-                  </span>
+                  All Models (Default)
                 </button>
-              );
-            })}
+
+                <div className="h-px bg-white/10" />
+
+                {/* SINGLE MODELS */}
+                {models.map((model) => (
+                  <button
+                    key={model.id}
+                    onClick={() => {
+                      log("INFO", "Model selector → single", model.id);
+                      selectModel(model.id);
+                      setOpen(false);
+                    }}
+                    className="w-full px-4 py-3 text-left text-sm hover:bg-white/5"
+                  >
+                    {model.name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </header>
 
-        {/* ---------------- CHAT WINDOW (Fills Available Space) ---------------- */}
-        <div className="flex-1 min-h-0 overflow-hidden relative z-0">
+        {/* ================= CHAT WINDOW ================= */}
+        <div className="flex-1 overflow-hidden">
           <ChatWindow />
         </div>
 
-        {/* ---------------- CHAT INPUT (Static Height at Bottom) ---------------- */}
-        <div className="w-full bg-[#0B1120] border-t border-white/5 shrink-0 z-20">
-          <div className="max-w-6xl mx-auto">
-            <ChatInput />
-          </div>
+        {/* ================= CHAT INPUT ================= */}
+        <div className="border-t border-white/5 shrink-0">
+          <ChatInput />
         </div>
-
       </div>
     </div>
   );

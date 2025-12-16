@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const log = require('../utils/logger');
 
 const MemberSchema = new mongoose.Schema({
   // Link to the real User document

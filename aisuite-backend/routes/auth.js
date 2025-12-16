@@ -8,10 +8,12 @@ const {
     verifyPayment,
     clearAllHistory,
     forgotPassword, // 🆕 Import
-    resetPassword   // 🆕 Import
+    resetPassword,
+    deleteMe   // 🆕 Import
 } = require('../controllers/authController');
 const { verifyToken } = require('../middleware/authMiddleware'); // import middleware
 const router = express.Router();
+const log = require('../utils/logger');
 
 // ------------------- AUTH ROUTES -------------------
 router.post('/signup', signup);
@@ -25,6 +27,8 @@ router.put('/reset-password/:token', resetPassword);
 router.get('/getme', verifyToken, getMe);
 router.get('/getHistory', verifyToken, getHistory);
 router.delete('/history/clear', verifyToken, clearAllHistory);
+router.delete('/delete-me', verifyToken, deleteMe);
+
 
 // ------------------- PAYMENT ROUTES -------------------
 router.post('/payment/create-order', verifyToken, createPaymentOrder);

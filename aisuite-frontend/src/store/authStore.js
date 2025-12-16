@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import API from "../api/axios";
+import log from "../utils/logger";
 import { useChatStore } from "./chatStore";
 
 /* ----------------------------------------------------------------
@@ -46,13 +47,8 @@ export const useAuthStore = create((set) => ({
     set({ ...initialState, token: null, user: null, role: "user" });
 
     // Reset chat store
-    useChatStore.setState({
-      messages: [],
-      currentModule: "CareerGPT",
-      loading: false,
-      historyLoading: false,
-      sidebarOpen: true,
-    });
+  useChatStore.getState().resetChatStore();
+
   },
 
   setSubscription: (subscription) => set({ subscription }),
@@ -90,7 +86,7 @@ export const useAuthStore = create((set) => ({
         dailyQueryCount: user?.dailyQueryCount || 0,
       });
     } catch (err) {
-      console.error("⚠️ Failed to fetch user info:", err);
+      log('ERROR', 'Failed to fetch user info', { error: err.message || err });
       set({ ...initialState });
     }
   },

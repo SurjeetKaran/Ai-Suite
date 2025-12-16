@@ -102,5 +102,31 @@ router.get("/team/dashboard", (req, res, next) => {
   next();
 }, teamController.getTeamDashboardStats);
 
+/**
+ * @desc   Get usage details for a team member
+ * @route  GET /team/user-usage/:userId
+ * @access Team Leader or Admin
+ */
+router.get(
+  "/team/user-usage/:userId",
+  (req, res, next) => {
+    const actor = req.admin
+      ? `Owner/Admin ${req.admin.email}`
+      : req.team
+      ? `Team Leader ${req.team.email}`
+      : "Unknown";
+
+    log(
+      "INFO",
+      `${actor} accessed route: GET /team/user-usage/${req.params.userId}`,
+      { userId: req.params.userId }
+    );
+
+    next();
+  },
+  teamController.getUserUsageForTeam
+);
+
+
 
 module.exports = router;

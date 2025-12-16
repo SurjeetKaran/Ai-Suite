@@ -14,6 +14,8 @@ import {
   BoltIcon,
   AcademicCapIcon,
   PencilSquareIcon,
+  Bars3Icon,
+  XMarkIcon
 } from "@heroicons/react/24/outline";
 
 const SECTIONS = ["home", "features", "pricing", "faq"];
@@ -224,59 +226,75 @@ export default function LandingPage() {
           >
             Get Started
           </Link>
-          <button
-            className="md:hidden text-2xl text-gray-300"
-            onClick={() => setIsMenuOpen((s) => !s)}
-          >
-            ☰
-          </button>
+         <button
+  className="md:hidden text-white"
+  onClick={() => setIsMenuOpen(true)}
+>
+  <Bars3Icon className="w-7 h-7" />
+</button>
+
         </div>
 
         {/* Mobile Menu */}
-        <AnimatePresence>
-          {isMenuOpen && (
-            <motion.div
-              initial={{ x: "100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "100%" }}
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="fixed top-0 right-0 z-50 w-72 h-full bg-[#0B1120] border-l border-white/10 flex flex-col pt-24 px-6 shadow-2xl"
-            >
-              <button
-                className="absolute top-6 right-6 text-gray-400 hover:text-white"
-                onClick={() => setIsMenuOpen(false)}
-              >
-                ✕
-              </button>
-              {SECTIONS.map((id) => (
-                <button
-                  key={id}
-                  onClick={() => handleNavClick(id)}
-                  className={`w-full text-left py-4 text-lg font-medium border-b border-white/5 ${
-                    activeSection === id ? "text-blue-400" : "text-gray-300"
-                  }`}
-                >
-                  {id.charAt(0).toUpperCase() + id.slice(1)}
-                </button>
-              ))}
-              <div className="mt-8 flex flex-col gap-4">
-                <Link
-                  to="/login"
-                  className="w-full py-3 rounded-xl border border-white/10 text-center font-medium text-white hover:bg-white/5"
-                >
-                  Log In
-                </Link>
-                <Link
-                  to="/signup"
-                  className="w-full py-3 rounded-xl bg-blue-600 text-center font-bold text-white hover:bg-blue-500"
-                >
-                  Get Started
-                </Link>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+
+
+
       </motion.nav>
+      <AnimatePresence>
+  {isMenuOpen && (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="
+        fixed inset-0
+        z-[999]
+      bg-gradient-to-b from-black via-black/95 to-black
+
+
+        backdrop-blur-2xl
+        flex flex-col
+      "
+    >
+      {/* Close */}
+      <button
+        onClick={() => setIsMenuOpen(false)}
+        className="absolute top-4 right-4 text-white"
+      >
+        <XMarkIcon className="w-8 h-8" />
+      </button>
+
+      {/* Menu */}
+      <div className="flex flex-col items-center justify-center flex-1 gap-8 text-xl font-semibold pt-24">
+        {SECTIONS.map((id) => (
+          <button
+            key={id}
+            onClick={() => handleNavClick(id)}
+            className="text-white/90 hover:text-white transition"
+          >
+            {id.charAt(0).toUpperCase() + id.slice(1)}
+          </button>
+        ))}
+
+        <div className="mt-10 flex flex-col gap-4 w-64">
+          <Link
+            to="/login"
+            className="py-3 rounded-xl border border-white/30 text-center text-white"
+          >
+            Log In
+          </Link>
+          <Link
+            to="/signup"
+            className="py-3 rounded-xl bg-blue-600 text-center font-bold text-white"
+          >
+            Get Started
+          </Link>
+        </div>
+      </div>
+    </motion.div>
+  )}
+</AnimatePresence>
+
 
       {/* Content Wrapper */}
       <div className="relative z-10 pt-20">

@@ -13,6 +13,8 @@ import {
 } from "@heroicons/react/24/outline";
 
 import LoadingSpinner from "../components/LoadingSpinner";
+import log from "../utils/logger";
+import dialog from "../utils/dialogService";
 
 export default function PaymentPage() {
   const navigate = useNavigate();
@@ -28,7 +30,7 @@ export default function PaymentPage() {
         const res = await API.get("/admin/plan");
         setPlans(res.data);
       } catch (err) {
-        console.error("Failed to fetch plans:", err);
+        log('ERROR', 'Failed to fetch plans', err?.response?.data || err);
       } finally {
         setLoading(false);
       }
@@ -68,12 +70,12 @@ export default function PaymentPage() {
             });
 
             // D. Success
-            alert("Payment Successful! You are now a Pro member.");
+            await dialog.alert("Payment Successful! You are now a Pro member.");
             await fetchUser(); // Refresh user state
             navigate("/dashboard");
-          } catch (err) {
-            alert("Payment verification failed.");
-            console.error(err);
+            } catch (err) {
+            await dialog.alert("Payment verification failed.");
+            log('ERROR', 'Payment verification failed', err?.response?.data || err);
           }
         },
         prefill: {
@@ -89,8 +91,8 @@ export default function PaymentPage() {
       rzp.open();
 
     } catch (err) {
-      console.error("Payment initiation failed:", err);
-      alert("Something went wrong. Please try again.");
+      log('ERROR', 'Payment initiation failed', err?.response?.data || err);
+      await dialog.alert("Something went wrong. Please try again.");
     } finally {
       setProcessing(false);
     }

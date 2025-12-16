@@ -1,6 +1,7 @@
 // src/store/adminDashboardStore.js
 import { create } from "zustand";
 import API from "../api/axios";
+import log from "../utils/logger";
 
 export const useAdminDashboardStore = create((set, get) => ({
   dashboardData: null,
@@ -18,7 +19,7 @@ export const useAdminDashboardStore = create((set, get) => ({
       
       set({ dashboardData: res.data, loading: false });
     } catch (err) {
-      console.error("Failed to fetch admin dashboard:", err);
+      log('ERROR', 'Failed to fetch admin dashboard', { error: err.message || err });
       set({ dashboardData: null, loading: false });
     }
   },

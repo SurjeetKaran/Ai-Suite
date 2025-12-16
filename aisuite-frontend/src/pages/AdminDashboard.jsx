@@ -1,44 +1,110 @@
-// // src/pages/AdminDashboard.jsx
-
-
+// src/pages/AdminDashboard.jsx
 import React, { useState, useEffect } from "react";
 import AdminSidebar from "../components/Admin/AdminSidebar";
 import LoadingSpinner from "../components/LoadingSpinner";
 
-// Import Admin Sections
+// Admin Sections
 import HomeSection from "../components/Admin/HomeSection";
 import UserManagement from "../components/Admin/UserManagement";
 import TeamManagement from "../components/Admin/TeamManagement";
 import PlanManagement from "../components/Admin/PlanManagement";
+import ApiKeyManagement from "../components/Admin/ApiKeyManagement";
+import LoadBalancerConfig from "../components/Admin/LoadBalancerConfig";
+import SystemConfig from "../components/Admin/SystemConfig";
+import UserUsageDetails from "../components/Admin/UserUsageDetails";
 
 // Store
 import { useAdminDashboardStore } from "../store/adminDashboardStore";
 
 export default function AdminDashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // ⬅ dynamic tab system
   const [activeTab, setActiveTab] = useState("Home");
 
+  // ⬅ required new states for Usage Page
+  const [selectedUserId, setSelectedUserId] = useState(null);
+  const [selectedUserName, setSelectedUserName] = useState("");
+  const [previousTab, setPreviousTab] = useState("Home");
+  const [teamMode, setTeamMode] = useState(false);
+
+  // Store
   const { dashboardData, loading, fetchDashboard } = useAdminDashboardStore();
 
-  // Fetch data once on mount
   useEffect(() => {
     fetchDashboard();
   }, [fetchDashboard]);
 
-  // Show Premium Loader
-  if (loading || !dashboardData) return <LoadingSpinner message="Loading Admin Dashboard..." />;
+  // ⬅ main function to open full-page usage
+  const openUserUsage = ({ userId, userName, fromTab, team }) => {
+    setSelectedUserId(userId);
+    setSelectedUserName(userName);
+    setTeamMode(team || false);
+    setPreviousTab(fromTab);
+    setActiveTab(`Usage – ${userName}`);
+  };
 
-  // Render the correct component based on the active tab
+  const handleBackFromUsage = () => {
+    setActiveTab(previousTab);
+    setSelectedUserId(null);
+    setSelectedUserName("");
+    setTeamMode(false);
+  };
+
+  if (loading || !dashboardData)
+    return <LoadingSpinner message="Loading Admin Dashboard..." />;
+
   const renderContent = () => {
+    // ⭐ NEW: dynamic tab matching  
+    if (activeTab.startsWith("Usage –") && selectedUserId) {
+      return (
+        <UserUsageDetails
+          userId={selectedUserId}
+          userName={selectedUserName}
+          teamMode={teamMode}
+          onBack={handleBackFromUsage}
+        />
+      );
+    }
+
     switch (activeTab) {
       case "Home":
         return <HomeSection />;
       case "User Management":
-        return <UserManagement />;
+        return (
+          <UserManagement
+            openUserUsage={(id, name) =>
+              openUserUsage({
+                userId: id,
+                userName: name,
+                fromTab: "User Management",
+                team: false,
+              })
+            }
+          />
+        );
       case "Team Management":
-        return <TeamManagement />;
+        return (
+          <TeamManagement
+            openUserUsage={(id, name) =>
+              openUserUsage({
+                userId: id,
+                userName: name,
+                fromTab: "Team Management",
+                team: true,
+              })
+            }
+          />
+        );
       case "Plan Management":
         return <PlanManagement />;
+      case "API Keys":
+        return <ApiKeyManagement />;
+      case "Load Balancer":
+        return <LoadBalancerConfig />;
+      case "System Config":
+        return <SystemConfig />;
+
       default:
         return <HomeSection />;
     }
@@ -46,41 +112,28 @@ export default function AdminDashboard() {
 
   return (
     <div className="flex h-screen bg-[#0B1120] text-white overflow-hidden font-sans">
-      
-      {/* 1. Admin Sidebar (Navigation) */}
       <AdminSidebar
         sidebarOpen={sidebarOpen}
-        toggleSidebar={() => setSidebarOpen((prev) => !prev)}
+        toggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
       />
 
-      {/* 2. Main Content Area */}
-      {/* Removed AdminNavbar. The content now takes the full height. */}
-      <main className="flex-1 flex flex-col h-full relative min-w-0 overflow-hidden bg-gradient-to-br from-[#0B1120] to-[#1a1f2e]">
-        
-        {/* Scrollable Container */}
+      <main className="flex-1 flex flex-col h-full relative min-w-0 overflow-hidden">
         <div className="flex-1 overflow-y-auto thin-scrollbar p-8">
-          
-          {/* Internal Header (Replaces Navbar) */}
-          <div className="mb-10 flex flex-col gap-2 animate-in fade-in slide-in-from-bottom-4 duration-700">
-            <h1 className="text-3xl font-bold text-white tracking-tight">
-              {activeTab}
-            </h1>
-            <p className="text-gray-400 text-sm font-medium">
-              Overview and management for your AI-Suite platform.
-            </p>
-            <div className="h-1 w-20 bg-blue-600 rounded-full mt-2"></div>
-          </div>
+          {/* Header (dynamic) */}
+          {!activeTab.startsWith("Usage –") && (
+            <div className="mb-10">
+              <h1 className="text-3xl font-bold">{activeTab}</h1>
+              <p className="text-gray-400 text-sm">
+                Overview and management for your AI Suite.
+              </p>
+            </div>
+          )}
 
-          {/* Dynamic Section Content */}
-          <div className="animate-in fade-in zoom-in-95 duration-500">
-            {renderContent()}
-          </div>
-
+          {renderContent()}
         </div>
       </main>
-
     </div>
   );
 }

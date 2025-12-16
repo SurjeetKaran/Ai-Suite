@@ -3,87 +3,122 @@ import { useChatStore } from "../store/chatStore";
 import { useAuthStore } from "../store/authStore";
 import { useDropzone } from "react-dropzone";
 import * as pdfjsLib from "pdfjs-dist";
+import log from "../utils/logger";
+import dialog from "../utils/dialogService";
 
-// Icons
-import { 
-  PaperAirplaneIcon, 
-  PaperClipIcon, 
-  XMarkIcon, 
+import {
+  PaperAirplaneIcon,
+  PaperClipIcon,
+  XMarkIcon,
   SparklesIcon,
   ChevronUpIcon,
-  DocumentTextIcon
+  DocumentTextIcon,
 } from "@heroicons/react/24/solid";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+/* =====================================================
+ * PDF WORKER SETUP
+ * ===================================================== */
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
+/* =====================================================
+ * STATIC MODULE DEFINITIONS
+ * (Backend expects these exact IDs)
+ * ===================================================== */
 const MODULES = [
   { id: "CareerGPT", label: "Career", color: "text-blue-400" },
-  { id: "StudyGPT",  label: "Study",  color: "text-green-400" },
+  { id: "StudyGPT", label: "Study", color: "text-green-400" },
   { id: "ContentGPT", label: "Content", color: "text-purple-400" },
 ];
 
 export default function ChatInput() {
+  /* =====================================================
+   * LOCAL UI STATE
+   * ===================================================== */
   const [input, setInput] = useState("");
   const [uploadedFile, setUploadedFile] = useState(null);
   const [parsedFileText, setParsedFileText] = useState("");
   const [showModuleMenu, setShowModuleMenu] = useState(false);
+
   const textareaRef = useRef(null);
 
-  const { sendMessage, loading, currentModule, setModule, conversationId, messages } = useChatStore();
-  const { user, subscription } = useAuthStore();
+  /* =====================================================
+   * STORES
+   * ===================================================== */
+  const {
+    sendMessage,
+    loading,
+    currentModule,
+    setModule,
+    conversationId,
+    messages,
+    canSendMessage, // ✅ centralized limit logic
+  } = useChatStore();
 
-  // 🔴 LIMIT LOGIC 🔴
-  // 1. Daily Limit: Cannot start NEW chat if used 3 today
-  const isDailyLimitReached = 
-    subscription === "Free" && 
-    (user?.dailyQueryCount || 0) >= 3 && 
-    !conversationId;
+  const { subscription } = useAuthStore();
 
-  // 2. Chat Length Limit: Cannot reply if chat has >= 10 user messages
-  const userMessageCount = messages.filter(m => m.role === "user").length;
-  const isChatLimitReached = 
-    subscription === "Free" && 
-    conversationId && 
-    userMessageCount >= 10;
+  /* =====================================================
+   * LIMIT HANDLING (NO MAGIC NUMBERS HERE)
+   * ===================================================== */
+  const isBlocked = !canSendMessage();
 
-  // Combined Block
-  const isBlocked = isDailyLimitReached || isChatLimitReached;
-
+  /* =====================================================
+   * AUTO-RESIZE TEXTAREA
+   * ===================================================== */
   useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
-    }
+    if (!textareaRef.current) return;
+    textareaRef.current.style.height = "auto";
+    textareaRef.current.style.height =
+      `${textareaRef.current.scrollHeight}px`;
   }, [input]);
 
+  /* =====================================================
+   * FILE PARSING (TXT / CSV / JSON / PDF)
+   * ===================================================== */
   const parseFileContent = async (file) => {
     try {
       const ext = file.name.split(".").pop().toLowerCase();
-      if (["txt", "csv", "json"].includes(ext)) return await file.text();
+      log("INFO", "Parsing uploaded file", { name: file.name, ext });
+
+      // Simple text-based files
+      if (["txt", "csv", "json"].includes(ext)) {
+        return await file.text();
+      }
+
+      // PDF files (first 5 pages only)
       if (ext === "pdf") {
         const arrayBuffer = await file.arrayBuffer();
-        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-        const pdf = await loadingTask.promise;
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
         let text = "";
         const maxPages = Math.min(pdf.numPages, 5);
+
         for (let i = 1; i <= maxPages; i++) {
           const page = await pdf.getPage(i);
           const content = await page.getTextContent();
-          text += content.items.map((item) => item.str).join(" ") + "\n";
+          text += content.items.map(item => item.str).join(" ") + "\n";
         }
+
         return text;
       }
+
       return "";
-    } catch (error) {
-      console.error("File parsing error:", error);
-      alert("Error reading file.");
+    } catch (err) {
+      log("ERROR", "File parsing failed", err);
+      await dialog.alert("Failed to read uploaded file.");
       return "";
     }
   };
 
+  /* =====================================================
+   * FILE DROP HANDLER
+   * ===================================================== */
   const onDrop = async (files) => {
     const file = files[0];
     if (!file) return;
+
+    log("INFO", "File dropped", file.name);
+
     setUploadedFile(file);
     const text = await parseFileContent(file);
     setParsedFileText(text);
@@ -92,113 +127,137 @@ export default function ChatInput() {
   const { getRootProps, getInputProps } = useDropzone({
     onDrop,
     multiple: false,
-    accept: { 'text/*': ['.txt', '.csv', '.json'], 'application/pdf': ['.pdf'] },
-    disabled: isBlocked || loading,
+    disabled: loading || isBlocked,
+    accept: {
+      "text/*": [".txt", ".csv", ".json"],
+      "application/pdf": [".pdf"],
+    },
   });
 
   const clearFile = (e) => {
     e.stopPropagation();
+    log("INFO", "Clearing uploaded file");
     setUploadedFile(null);
     setParsedFileText("");
   };
 
+  /* =====================================================
+   * SEND MESSAGE
+   * ===================================================== */
   const handleSend = async () => {
-    if ((!input.trim() && !parsedFileText) || isBlocked || loading) return;
+    if (loading || isBlocked) return;
 
-    let finalMessage = input;
+    if (!input.trim() && !parsedFileText) return;
+
+    let finalMessage = input.trim();
+
+    // Encode file content safely (no backend changes)
     if (parsedFileText) {
-      finalMessage += `\n\n[Attached File: ${uploadedFile.name}]\nContent:\n${parsedFileText}`;
+      finalMessage +=
+        `\n\n<<<FILE:${uploadedFile.name}>>>\n` +
+        parsedFileText +
+        `\n<<<END_FILE>>>`;
     }
 
+    log("INFO", "Sending message", {
+      hasFile: !!uploadedFile,
+      module: currentModule,
+      conversationId,
+    });
+
     await sendMessage(finalMessage);
+
+    // Reset input state
     setInput("");
     setUploadedFile(null);
     setParsedFileText("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
   };
 
-  const activeModule = MODULES.find(m => m.id === currentModule) || MODULES[0];
+  /* =====================================================
+   * DERIVED UI VALUES
+   * ===================================================== */
+  const activeModule =
+    MODULES.find(m => m.id === currentModule) || MODULES[0];
 
+  /* =====================================================
+   * RENDER
+   * ===================================================== */
   return (
-    <div className="w-full max-w-4xl mx-auto px-4 pb-8">
-      
-      {/* ⚠️ DYNAMIC WARNING BANNER */}
+    <div className="w-full max-w-4xl mx-auto px-3 sm:px-4 md:px-6 pb-6">
+
+      {/* ⚠️ LIMIT WARNING */}
       {isBlocked && (
-        <div className="mb-4 flex items-center justify-center gap-2 p-3 text-sm text-amber-200 bg-amber-900/30 border border-amber-500/30 rounded-xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-4">
+        <div className="mb-4 flex items-center justify-center gap-2 p-3 text-xs text-amber-200 bg-amber-900/30 border border-amber-500/30 rounded-xl">
           <SparklesIcon className="w-4 h-4" />
           <span>
-            {isDailyLimitReached 
-              ? "Daily topic limit reached (3/3). Upgrade to Pro for unlimited chats." 
-              : "Conversation limit reached (10/10). Upgrade to Pro to continue."
-            }
+            {subscription === "Free"
+              ? "Free plan limit reached. Upgrade to continue."
+              : "Action temporarily blocked."}
           </span>
         </div>
       )}
 
-      {/* Main Input Container */}
-      <div className={`
-        relative group flex flex-col bg-[#1e293b]/80 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl transition-all duration-300 mb-4
-        ${isBlocked ? 'opacity-50 pointer-events-none grayscale' : 'hover:border-blue-500/30 focus-within:border-blue-500/50 focus-within:shadow-blue-500/10'}
-      `}>
-        
-        {/* File Preview */}
+      <div
+        className={`relative flex flex-col bg-[#1e293b]/80 border border-white/10 rounded-3xl shadow-xl
+        ${isBlocked ? "opacity-50 pointer-events-none" : ""}`}
+      >
+
+        {/* FILE PREVIEW */}
         {uploadedFile && (
-          <div className="mx-4 mt-3 flex items-center gap-3 p-2 bg-blue-500/10 border border-blue-500/20 rounded-xl w-fit">
-            <div className="p-2 bg-blue-500/20 rounded-lg">
-              <DocumentTextIcon className="w-4 h-4 text-blue-400" />
+          <div className="mx-4 mt-3 flex items-center gap-3 p-2 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+            <DocumentTextIcon className="w-4 h-4 text-blue-400" />
+            <div className="flex-1 truncate text-xs text-blue-100">
+              {uploadedFile.name}
             </div>
-            <div className="flex flex-col">
-              <span className="text-xs font-semibold text-blue-100 truncate max-w-[150px]">{uploadedFile.name}</span>
-              <span className="text-[10px] text-blue-300 uppercase font-bold">Attached</span>
-            </div>
-            <button onClick={clearFile} className="ml-2 hover:bg-white/10 rounded-full p-1 transition">
-              <XMarkIcon className="w-4 h-4 text-gray-400 hover:text-white" />
+            <button onClick={clearFile}>
+              <XMarkIcon className="w-4 h-4 text-gray-400" />
             </button>
           </div>
         )}
 
         <div className="flex items-end gap-2 p-3">
-          
-          {/* Module Selector */}
-          <div className="relative pb-2">
-            <button 
-              onClick={() => setShowModuleMenu(!showModuleMenu)}
-              disabled={isBlocked}
-              className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all group/btn"
+
+          {/* MODULE SELECTOR */}
+          <div className="relative">
+            <button
+              onClick={() => setShowModuleMenu(v => !v)}
+              className="px-3 py-2 bg-white/5 rounded-xl flex items-center gap-2"
             >
-              <span className={`text-xs font-bold uppercase tracking-wide ${activeModule.color}`}>
+              <span className={`text-xs font-bold ${activeModule.color}`}>
                 {activeModule.label}
               </span>
-              <ChevronUpIcon className={`w-3 h-3 text-gray-500 transition-transform duration-300 ${showModuleMenu ? 'rotate-180' : ''}`} />
+              <ChevronUpIcon
+                className={`w-3 h-3 transition ${showModuleMenu ? "rotate-180" : ""}`}
+              />
             </button>
 
             {showModuleMenu && (
-              <div className="absolute bottom-12 left-0 z-50 w-40 bg-[#0f172a] border border-white/10 rounded-xl shadow-xl overflow-hidden animate-in slide-in-from-bottom-2">
-                <div className="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider bg-white/5">
-                  Select Mode
-                </div>
-                {MODULES.map(mod => (
+              <div className="absolute bottom-12 left-0 bg-[#0f172a] rounded-xl border border-white/10 z-50">
+                {MODULES.map(m => (
                   <button
-                    key={mod.id}
-                    onClick={() => { setModule(mod.id); setShowModuleMenu(false); }}
-                    className={`w-full text-left px-4 py-3 text-sm font-medium transition-colors flex items-center gap-2
-                      ${currentModule === mod.id ? 'bg-blue-600/10 text-blue-400' : 'text-gray-300 hover:bg-white/5'}
-                    `}
+                    key={m.id}
+                    onClick={() => {
+                      log("INFO", "Module selected", m.id);
+                      setModule(m.id);
+                      setShowModuleMenu(false);
+                    }}
+                    className="block w-full px-4 py-3 text-left text-sm hover:bg-white/5"
                   >
-                    <span className={`w-2 h-2 rounded-full ${mod.color.replace('text-', 'bg-')}`}></span>
-                    {mod.label}
+                    {m.label}
                   </button>
                 ))}
               </div>
             )}
           </div>
 
-          {/* Text Area - Disabled if BLOCKED */}
+          {/* TEXTAREA */}
           <textarea
             ref={textareaRef}
-            className="flex-1 bg-transparent text-white placeholder-gray-400 text-sm px-2 py-3 outline-none resize-none max-h-[200px] overflow-y-auto custom-scrollbar"
-            placeholder={isBlocked ? "Limit reached..." : "Ask anything..."}
+            rows={1}
             value={input}
+            disabled={loading || isBlocked}
+            placeholder={isBlocked ? "Limit reached..." : "Ask anything..."}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -206,47 +265,34 @@ export default function ChatInput() {
                 handleSend();
               }
             }}
-            disabled={isBlocked || loading} 
-            rows={1}
+            className="flex-1 bg-transparent resize-none text-sm outline-none text-white"
           />
 
-          {/* Actions */}
-          <div className="flex items-center gap-2 pb-1">
+          {/* ACTION BUTTONS */}
+          <div className="flex items-center gap-2">
             <div {...getRootProps()}>
               <input {...getInputProps()} />
-              <button 
-                disabled={isBlocked || loading}
-                className="p-2.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-xl transition-all"
-                title="Upload file"
-              >
-                <PaperClipIcon className="w-5 h-5" />
-              </button>
+              <PaperClipIcon className="w-5 h-5 text-gray-400 cursor-pointer" />
             </div>
 
             <button
               onClick={handleSend}
-              disabled={(!input.trim() && !uploadedFile) || loading || isBlocked}
-              className={`p-2.5 rounded-xl transition-all duration-300 shadow-lg flex items-center justify-center
-                ${(!input.trim() && !uploadedFile) || loading || isBlocked
-                  ? "bg-white/5 text-gray-500 cursor-not-allowed"
-                  : "bg-blue-600 hover:bg-blue-500 text-white shadow-blue-500/20 hover:scale-105"
-                }`}
+              disabled={loading || isBlocked}
+              className="p-2 bg-blue-600 rounded-xl"
             >
               {loading ? (
-                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
-                <PaperAirplaneIcon className="w-5 h-5" />
+                <PaperAirplaneIcon className="w-4 h-4 text-white" />
               )}
             </button>
           </div>
         </div>
       </div>
-      
-      <div className="text-center">
-        <p className="text-[10px] text-gray-500 font-medium tracking-wide">
-          AiSuite is powered by multi-LLM architecture. Answers may vary.
-        </p>
-      </div>
+
+      <p className="text-center text-[10px] text-gray-500 mt-2">
+        AiSuite uses multiple AI models. Answers may vary.
+      </p>
     </div>
   );
 }

@@ -6,6 +6,7 @@ const log = require("../utils/logger");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const QueryHistory = require("../models/QueryHistory");
+const adminController = require("./adminController"); // ensure imported
 
 /* ----------------------------------------------------------------
  🧩 TEAM CONTROLLER
@@ -296,6 +297,7 @@ exports.getTeamDashboardStats = async (req, res) => {
       const usage = usageStats.find((u) => u._id?.toString() === m.userId?.toString());
       return {
         id: m._id,
+        userId: m.userId,
         name: m.name,
         email: m.email,
         subscription: m.subscription,
@@ -325,3 +327,187 @@ exports.getTeamDashboardStats = async (req, res) => {
     res.status(500).json({ msg: "Failed to fetch team stats" });
   }
 };
+
+
+exports.getUserUsageForTeam = async (req, res) => {
+  try {
+    const userId = req.params.userId;
+
+    // 🔒 Team access required
+    if (!req.team) {
+      return res.status(403).json({ msg: "Team access required" });
+    }
+
+    // 🔒 Ensure user belongs to this team
+    const isMember = req.team.members.some(
+      (m) => m.userId?.toString() === userId
+    );
+
+    if (!isMember) {
+      return res.status(403).json({ msg: "User not part of your team" });
+    }
+
+    log(
+      "INFO",
+      `Team usage requested for user ${userId} by team ${req.team.email}`
+    );
+
+    // 1️⃣ FETCH USER
+    const user = await User.findById(userId).select(
+      "_id name email subscription subscribedAt expiryDate createdAt"
+    );
+
+    if (!user) {
+      return res.status(404).json({ msg: "User not found" });
+    }
+
+    // 2️⃣ FETCH ALL QUERIES
+    const queryList = await QueryHistory.find({ userId }).sort({
+      lastUpdated: -1,
+    });
+
+    const totalQueries = queryList.length;
+
+    // INITIALIZE ANALYTICS STORAGE
+    const moduleUsage = {};
+    const modelUsage = { chatGPT: 0, claude: 0, gemini: 0, groq: 0 };
+    const providerUsage = { groq: 0, openai: 0, anthropic: 0, google: 0 };
+
+    const detailedQueries = [];
+
+    // 3️⃣ PROCESS EACH QUERY (IDENTICAL TO ADMIN)
+    for (const q of queryList) {
+      // Module stats
+      moduleUsage[q.moduleType] = (moduleUsage[q.moduleType] || 0) + 1;
+
+      let totalTokens = 0;
+      let perModel = { chatGPT: 0, claude: 0, gemini: 0, groq: 0 };
+      let perProvider = { groq: 0, openai: 0, anthropic: 0, google: 0 };
+
+      const formattedMessages = [];
+
+      for (const msg of q.messages || []) {
+        const preview = msg.content ? msg.content.slice(0, 200) : null;
+
+        if (msg.tokenUsage) {
+          // ── Shape (1): Aggregated token usage ──
+          if (
+            typeof msg.tokenUsage.total === "number" ||
+            msg.tokenUsage.modelTokens ||
+            msg.tokenUsage.providerTokens
+          ) {
+            const tokens = msg.tokenUsage.total || 0;
+            totalTokens += tokens;
+
+            const mTokens = msg.tokenUsage.modelTokens || {};
+            for (const mk of Object.keys(mTokens)) {
+              const val = mTokens[mk] || 0;
+              if (perModel[mk] !== undefined) perModel[mk] += val;
+              if (modelUsage[mk] !== undefined) modelUsage[mk] += val;
+            }
+
+            const pTokens = msg.tokenUsage.providerTokens || {};
+            for (const pk of Object.keys(pTokens)) {
+              const val = pTokens[pk] || 0;
+              if (perProvider[pk] !== undefined) perProvider[pk] += val;
+              if (providerUsage[pk] !== undefined) providerUsage[pk] += val;
+            }
+
+            // Derive per-model tokens from individualOutputs if missing
+            if (
+              (!msg.tokenUsage.modelTokens ||
+                Object.keys(msg.tokenUsage.modelTokens).length === 0) &&
+              msg.individualOutputs &&
+              typeof msg.individualOutputs === "object"
+            ) {
+              for (const mk of Object.keys(msg.individualOutputs)) {
+                const out = msg.individualOutputs[mk] || {};
+                const val =
+                  out.tokensUsed ||
+                  out.totalTokens ||
+                  out.tokens ||
+                  0;
+                if (val) {
+                  if (perModel[mk] !== undefined) perModel[mk] += val;
+                  if (modelUsage[mk] !== undefined) modelUsage[mk] += val;
+                }
+              }
+            }
+
+          // ── Shape (2): Legacy per-message token usage ──
+          } else if (
+            msg.tokenUsage.tokens ||
+            msg.tokenUsage.model ||
+            msg.tokenUsage.provider
+          ) {
+            const model = msg.tokenUsage.model;
+            const provider = msg.tokenUsage.provider;
+            const tokens = msg.tokenUsage.tokens || 0;
+
+            totalTokens += tokens;
+
+            if (perModel[model] !== undefined) perModel[model] += tokens;
+            if (perProvider[provider] !== undefined)
+              perProvider[provider] += tokens;
+
+            if (modelUsage[model] !== undefined)
+              modelUsage[model] += tokens;
+            if (providerUsage[provider] !== undefined)
+              providerUsage[provider] += tokens;
+          }
+        }
+
+        // ✅ MESSAGE-LEVEL FORMATTING (SAME AS ADMIN)
+        formattedMessages.push({
+          role: msg.role,
+          contentPreview: preview,
+          tokenUsage: msg.tokenUsage || null,
+          individualOutputs: msg.individualOutputs || null,
+        });
+      }
+
+      detailedQueries.push({
+        id: q._id,
+        title: q.title,
+        moduleType: q.moduleType,
+        createdAt: q.createdAt,
+        updatedAt: q.lastUpdated,
+        totalTokens,
+        modelTokens: perModel,
+        providerTokens: perProvider,
+        messages: formattedMessages, // ✅ CRITICAL ADDITION
+      });
+    }
+
+    // 4️⃣ SUMMARY
+    const summary = {
+      totalQueries,
+      totalTokensUsed: Object.values(providerUsage).reduce(
+        (a, b) => a + b,
+        0
+      ),
+      modelUsage,
+      providerUsage,
+      moduleUsage,
+    };
+
+    // 5️⃣ FINAL RESPONSE (SCHEMA MATCHES ADMIN)
+    res.json({
+      user,
+      summary,
+      recentConversations: queryList.slice(0, 20).map((q) => ({
+        queryId: q._id,
+        title: q.title,
+        moduleType: q.moduleType,
+        date: q.lastUpdated,
+      })),
+      detailedQueries,
+    });
+
+  } catch (err) {
+    log("ERROR", "Team user usage failed", err);
+    res.status(500).json({ msg: "Failed to fetch usage details" });
+  }
+};
+
+
