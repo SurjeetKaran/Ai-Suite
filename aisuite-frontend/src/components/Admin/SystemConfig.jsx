@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState,useRef } from "react";
 import API from "../../api/axios";
 import log from "../../utils/logger";
 import dialog from "../../utils/dialogService";
@@ -19,6 +19,8 @@ export default function SystemConfig() {
   // Generic system config form
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
+  const editFormRef = useRef(null);
+
 
   /* ---------------- helpers ---------------- */
 
@@ -104,12 +106,39 @@ export default function SystemConfig() {
     setNewValue(JSON.stringify(cfg.value, null, 2));
   }
 
-  window.scrollTo({
-    top: 0,
-    behavior: "smooth",
-  });
+ editFormRef.current?.scrollIntoView({
+  behavior: "smooth",
+  block: "start",
+});
+
 };
 
+
+const handleDeleteConfig = async (key) => {
+  const ok = await dialog.confirm(
+    `Are you sure you want to delete "${key}"?\nThis action cannot be undone.`
+  );
+
+  if (!ok) return;
+
+  try {
+    setSaving(true);
+    await API.delete(`/admin/system-config/${key}`);
+    showMsg("System config deleted");
+    fetchConfigs();
+
+    // Clear form if the deleted key was being edited
+    if (newKey === key) {
+      setNewKey("");
+      setNewValue("");
+    }
+  } catch (err) {
+    log("ERROR", "Failed to delete system config", err?.response?.data || err);
+    showMsg("Failed to delete system config", "error");
+  } finally {
+    setSaving(false);
+  }
+};
 
   const handleSaveGenericConfig = async () => {
     const key = newKey.trim();
@@ -221,10 +250,14 @@ export default function SystemConfig() {
       </div>
 
       {/* ---------------- GENERIC SYSTEM CONFIG ---------------- */}
-      <div className="bg-[#0f172a] border border-white/5 p-5 rounded-2xl space-y-4">
-        <h3 className="text-lg font-bold text-white">
-          Add / Update System Config
-        </h3>
+     <div
+  ref={editFormRef}
+  className="bg-[#0f172a] border border-white/5 p-5 rounded-2xl space-y-4"
+>
+  <h3 className="text-lg font-bold text-white">
+    Add / Update System Config
+  </h3>
+
 
         <input
           value={newKey}
@@ -250,13 +283,23 @@ JWT_SECRET → strong_random_secret
           className="w-full p-3 rounded bg-transparent border border-white/10 text-white placeholder-gray-400 font-mono text-sm"
         />
 
-      <button
+<button
   onClick={handleSaveGenericConfig}
+  disabled={saving}
+  className={`w-full md:w-auto px-6 py-2.5 rounded-xl font-semibold text-white
+    transition-all duration-200
+    ${configs.some(c => c.key === newKey)
+      ? "bg-amber-600 hover:bg-amber-700"
+      : "bg-emerald-600 hover:bg-emerald-700"}
+    disabled:opacity-50 disabled:cursor-not-allowed`}
 >
-  {configs.some(c => c.key === newKey)
-    ? "Update System Config"
-    : "Save System Config"}
+  {saving
+    ? "Saving..."
+    : configs.some(c => c.key === newKey)
+      ? "Update System Config"
+      : "Save System Config"}
 </button>
+
 
       </div>
 
@@ -269,9 +312,11 @@ JWT_SECRET → strong_random_secret
         ) : (
           configs.map((cfg) => (
           <div key={cfg.key} className="space-y-2 border border-white/5 rounded-xl p-3">
-  <div className="flex items-center justify-between">
-    <div className="text-xs text-gray-400 font-mono">{cfg.key}</div>
+<div className="flex items-center justify-between">
+  <div className="text-xs text-gray-400 font-mono">{cfg.key}</div>
 
+  <div className="flex gap-2">
+    {/* Edit */}
     <button
       onClick={() => handleEditConfig(cfg)}
       className="p-2 rounded bg-blue-600/20 text-blue-300 hover:bg-blue-600/30"
@@ -279,7 +324,19 @@ JWT_SECRET → strong_random_secret
     >
       <PencilIcon className="w-4 h-4" />
     </button>
+
+    {/* Delete */}
+    <button
+      onClick={() => handleDeleteConfig(cfg.key)}
+      className="p-2 rounded bg-red-600/20 text-red-300 hover:bg-red-600/30"
+      title="Delete config"
+      disabled={saving}
+    >
+      <TrashIcon className="w-4 h-4" />
+    </button>
   </div>
+</div>
+
 
   <textarea
     readOnly
