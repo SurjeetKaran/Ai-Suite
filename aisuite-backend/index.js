@@ -39,6 +39,7 @@ const smartmixRoutes = require("./routes/smartmix");
 const adminRoutes = require("./routes/admin");
 const teamRoutes = require("./routes/team");
 const apiKeyRoutes = require("./routes/apiKeys");
+const sharedChatRoutes = require("./routes/sharedChat");
 
 const app = express();
 
@@ -88,8 +89,10 @@ app.use("/auth", authRoutes);
 app.use("/auth", socialAuthRoutes);
 app.use("/apikeys", apiKeyRoutes);
 app.use("/smartmix", smartmixRoutes);
+app.use("/", sharedChatRoutes);
 app.use("/admin", adminRoutes);
 app.use("/", teamRoutes);
+
 
 /* =====================================================
    Database Connection + Server Bootstrap

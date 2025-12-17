@@ -15,6 +15,7 @@ import TeamDashboard from "./pages/TeamDashboard";
 import PaymentPage from "./pages/PaymentPage";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
+import SharedChat from "./pages/SharedChat";
 
 /* =====================================================
  * AUXILIARY / SPECIAL ROUTES
@@ -88,6 +89,7 @@ function App() {
       {/* ---------- USER ROUTES ---------- */}
       <Route path="/dashboard" element={<DashboardPage />} />
       <Route path="/payment" element={<PaymentPage />} />
+      <Route path="/share/:shareId" element={<SharedChat />} />
 
       {/* ---------- ADMIN / TEAM ROUTES ---------- */}
       <Route path="/admin" element={<AdminDashboard />} />
