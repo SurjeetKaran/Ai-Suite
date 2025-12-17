@@ -1,19 +1,36 @@
+/**
+ * index.js
+ * ---------------------------------------------------
+ * Application entry point
+ *
+ * - Loads environment variables (dotenv) as fallback
+ * - Connects to MongoDB
+ * - Loads dynamic SystemConfig into runtime memory
+ * - Initializes cron jobs
+ * - Starts Express server
+ * ---------------------------------------------------
+ */
 
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
 
+// Models
 const SystemConfig = require("./models/SystemConfig");
-global.SystemEnv = {}; // dynamic config memory store
 
+// Global runtime config store (DB-backed)
+global.SystemEnv = {};
+
+// Cron jobs
 const scheduleDailyQueryReset = require("./utils/resetDailyQueries");
 const schedulePlanExpiryCheck = require("./utils/planExpiryCheck");
 const scheduleAPIKeyReset = require("./utils/resetAPIKeyUsage");
 
+// Utils
 const log = require("./utils/logger");
 
-// Passport
+// Passport (OAuth + JWT)
 const passport = require("passport");
 require("./config/passport");
 
@@ -23,67 +40,117 @@ const socialAuthRoutes = require("./routes/socialAuth");
 const smartmixRoutes = require("./routes/smartmix");
 const adminRoutes = require("./routes/admin");
 const teamRoutes = require("./routes/team");
-const ApiKeyRoutes = require("./routes/apiKeys");
+const apiKeyRoutes = require("./routes/apiKeys");
 
 const app = express();
 
-/* =========================
-    Load Dynamic System Config
-============================ */
+/* =====================================================
+   Helper: Load SystemConfig into Runtime Memory
+   - Enables DB-based env variables
+   - Avoids DB hits on every request
+===================================================== */
 async function loadDynamicEnv() {
   try {
     const configs = await SystemConfig.find();
-    configs.forEach(cfg => {
+
+    configs.forEach((cfg) => {
       global.SystemEnv[cfg.key] = cfg.value;
     });
 
-    log("INFO", "Dynamic Config Loaded", { keys: Object.keys(global.SystemEnv) });
+    log("INFO", "Dynamic SystemConfig loaded", {
+      keys: Object.keys(global.SystemEnv),
+    });
   } catch (err) {
-    log("ERROR", "Dynamic config load failed", { error: err.message });
+    log("ERROR", "Failed to load SystemConfig", {
+      error: err.message,
+    });
   }
 }
 
-app.use(cors({
-  origin: ["http://localhost:5173", "https://aisuite-orcin.vercel.app"],
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-  credentials: true
-}));
+/* =====================================================
+   Middleware
+===================================================== */
+app.use(
+  cors({
+    origin: [
+      "http://localhost:5173",
+      "https://aisuite-orcin.vercel.app",
+    ],
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+    credentials: true,
+  })
+);
 
 app.use(express.json());
 app.use(passport.initialize());
 
-/* ROUTES */
+/* =====================================================
+   Routes
+===================================================== */
 app.use("/auth", authRoutes);
 app.use("/auth", socialAuthRoutes);
-app.use("/apikeys", ApiKeyRoutes);
+app.use("/apikeys", apiKeyRoutes);
 app.use("/smartmix", smartmixRoutes);
 app.use("/admin", adminRoutes);
 app.use("/", teamRoutes);
 
-/* =========================
-    CONNECT MONGO + START SERVER
-============================ */
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(async () => {
-  log("INFO", "MongoDB connected successfully");
+/* =====================================================
+   Database Connection + Server Bootstrap
+===================================================== */
+async function startServer() {
+  try {
+    // ------------------------------------------
+    // Resolve MongoDB URI dynamically
+    // ------------------------------------------
+    const MONGO_URI =
+      process.env.MONGO_URI || null; // fallback only
 
-  await loadDynamicEnv();
+    if (!MONGO_URI) {
+      throw new Error("MONGO_URI is not configured");
+    }
 
-  scheduleDailyQueryReset();
-  schedulePlanExpiryCheck();
-  scheduleAPIKeyReset();
+    await mongoose.connect(MONGO_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
 
-  log("INFO", "Cron jobs started");
-})
-.catch(err => log("ERROR", "MongoDB connection failed", { error: err }));
+    log("INFO", "MongoDB connected successfully");
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`);
-  log("INFO", `Server running on port ${PORT}`);
-});
+    // ------------------------------------------
+    // Load SystemConfig AFTER DB connection
+    // ------------------------------------------
+    await loadDynamicEnv();
+
+    // ------------------------------------------
+    // Start Cron Jobs
+    // ------------------------------------------
+    scheduleDailyQueryReset();
+    schedulePlanExpiryCheck();
+    scheduleAPIKeyReset();
+
+    log("INFO", "Cron jobs started");
+
+    // ------------------------------------------
+    // Resolve PORT dynamically
+    // ------------------------------------------
+    const PORT =
+      global.SystemEnv.PORT ||
+      process.env.PORT ||
+      5000;
+
+    app.listen(PORT, "0.0.0.0", () => {
+      log("INFO", `Server running on port ${PORT}`);
+      console.log(`🚀 Server running on port ${PORT}`);
+    });
+  } catch (err) {
+    log("ERROR", "Server startup failed", {
+      error: err.message,
+    });
+    process.exit(1); // hard fail if critical config missing
+  }
+}
+
+// Boot application
+startServer();
 
 module.exports = { loadDynamicEnv };

@@ -1,8 +1,14 @@
-import React, { useEffect, useState,useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import API from "../../api/axios";
 import log from "../../utils/logger";
 import dialog from "../../utils/dialogService";
-import { PlusIcon, TrashIcon,PencilIcon } from "@heroicons/react/24/outline";
+import {
+  PlusIcon,
+  TrashIcon,
+  PencilIcon,
+  EyeIcon,
+  EyeSlashIcon,
+} from "@heroicons/react/24/outline";
 
 const MODELS_KEY = "AVAILABLE_MODELS";
 
@@ -11,6 +17,8 @@ export default function SystemConfig() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
+  // Track which config values are visible
+  const [visibleValues, setVisibleValues] = useState({});
 
   // Models form
   const [newModelId, setNewModelId] = useState("");
@@ -21,12 +29,25 @@ export default function SystemConfig() {
   const [newValue, setNewValue] = useState("");
   const editFormRef = useRef(null);
 
-
   /* ---------------- helpers ---------------- */
 
   const showMsg = (text, type = "success") => {
     setMessage({ text, type });
     setTimeout(() => setMessage(null), 3000);
+  };
+
+  const toggleValueVisibility = (key) => {
+    setVisibleValues((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  };
+
+  const getMaskedValue = (value) => {
+    if (typeof value === "string") {
+      return "•".repeat(Math.min(value.length, 12));
+    }
+    return "••••••••";
   };
 
   /* ---------------- data ---------------- */
@@ -51,9 +72,7 @@ export default function SystemConfig() {
   /* ---------------- models logic ---------------- */
 
   const modelsConfig = configs.find((c) => c.key === MODELS_KEY);
-  const models = Array.isArray(modelsConfig?.value)
-    ? modelsConfig.value
-    : [];
+  const models = Array.isArray(modelsConfig?.value) ? modelsConfig.value : [];
 
   const saveModels = async (updatedModels) => {
     try {
@@ -98,47 +117,49 @@ export default function SystemConfig() {
   /* ---------------- generic config logic ---------------- */
 
   const handleEditConfig = (cfg) => {
-  setNewKey(cfg.key);
+    setNewKey(cfg.key);
 
-  if (typeof cfg.value === "string") {
-    setNewValue(cfg.value);
-  } else {
-    setNewValue(JSON.stringify(cfg.value, null, 2));
-  }
-
- editFormRef.current?.scrollIntoView({
-  behavior: "smooth",
-  block: "start",
-});
-
-};
-
-
-const handleDeleteConfig = async (key) => {
-  const ok = await dialog.confirm(
-    `Are you sure you want to delete "${key}"?\nThis action cannot be undone.`
-  );
-
-  if (!ok) return;
-
-  try {
-    setSaving(true);
-    await API.delete(`/admin/system-config/${key}`);
-    showMsg("System config deleted");
-    fetchConfigs();
-
-    // Clear form if the deleted key was being edited
-    if (newKey === key) {
-      setNewKey("");
-      setNewValue("");
+    if (typeof cfg.value === "string") {
+      setNewValue(cfg.value);
+    } else {
+      setNewValue(JSON.stringify(cfg.value, null, 2));
     }
-  } catch (err) {
-    log("ERROR", "Failed to delete system config", err?.response?.data || err);
-    showMsg("Failed to delete system config", "error");
-  } finally {
-    setSaving(false);
-  }
-};
+
+    editFormRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  };
+
+  const handleDeleteConfig = async (key) => {
+    const ok = await dialog.confirm(
+      `Are you sure you want to delete "${key}"?\nThis action cannot be undone.`
+    );
+
+    if (!ok) return;
+
+    try {
+      setSaving(true);
+      await API.delete(`/admin/system-config/${key}`);
+      showMsg("System config deleted");
+      fetchConfigs();
+
+      // Clear form if the deleted key was being edited
+      if (newKey === key) {
+        setNewKey("");
+        setNewValue("");
+      }
+    } catch (err) {
+      log(
+        "ERROR",
+        "Failed to delete system config",
+        err?.response?.data || err
+      );
+      showMsg("Failed to delete system config", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleSaveGenericConfig = async () => {
     const key = newKey.trim();
@@ -250,14 +271,13 @@ const handleDeleteConfig = async (key) => {
       </div>
 
       {/* ---------------- GENERIC SYSTEM CONFIG ---------------- */}
-     <div
-  ref={editFormRef}
-  className="bg-[#0f172a] border border-white/5 p-5 rounded-2xl space-y-4"
->
-  <h3 className="text-lg font-bold text-white">
-    Add / Update System Config
-  </h3>
-
+      <div
+        ref={editFormRef}
+        className="bg-[#0f172a] border border-white/5 p-5 rounded-2xl space-y-4"
+      >
+        <h3 className="text-lg font-bold text-white">
+          Add / Update System Config
+        </h3>
 
         <input
           value={newKey}
@@ -283,24 +303,24 @@ JWT_SECRET → strong_random_secret
           className="w-full p-3 rounded bg-transparent border border-white/10 text-white placeholder-gray-400 font-mono text-sm"
         />
 
-<button
-  onClick={handleSaveGenericConfig}
-  disabled={saving}
-  className={`w-full md:w-auto px-6 py-2.5 rounded-xl font-semibold text-white
+        <button
+          onClick={handleSaveGenericConfig}
+          disabled={saving}
+          className={`w-full md:w-auto px-6 py-2.5 rounded-xl font-semibold text-white
     transition-all duration-200
-    ${configs.some(c => c.key === newKey)
-      ? "bg-amber-600 hover:bg-amber-700"
-      : "bg-emerald-600 hover:bg-emerald-700"}
+    ${
+      configs.some((c) => c.key === newKey)
+        ? "bg-amber-600 hover:bg-amber-700"
+        : "bg-emerald-600 hover:bg-emerald-700"
+    }
     disabled:opacity-50 disabled:cursor-not-allowed`}
->
-  {saving
-    ? "Saving..."
-    : configs.some(c => c.key === newKey)
-      ? "Update System Config"
-      : "Save System Config"}
-</button>
-
-
+        >
+          {saving
+            ? "Saving..."
+            : configs.some((c) => c.key === newKey)
+            ? "Update System Config"
+            : "Save System Config"}
+        </button>
       </div>
 
       {/* ---------------- EXISTING CONFIGS ---------------- */}
@@ -311,45 +331,61 @@ JWT_SECRET → strong_random_secret
           <div className="text-gray-400">Loading...</div>
         ) : (
           configs.map((cfg) => (
-          <div key={cfg.key} className="space-y-2 border border-white/5 rounded-xl p-3">
-<div className="flex items-center justify-between">
-  <div className="text-xs text-gray-400 font-mono">{cfg.key}</div>
+            <div
+              key={cfg.key}
+              className="space-y-2 border border-white/5 rounded-xl p-3"
+            >
+              <div className="flex items-center justify-between">
+                <div className="text-xs text-gray-400 font-mono">{cfg.key}</div>
 
-  <div className="flex gap-2">
-    {/* Edit */}
-    <button
-      onClick={() => handleEditConfig(cfg)}
-      className="p-2 rounded bg-blue-600/20 text-blue-300 hover:bg-blue-600/30"
-      title="Edit config"
-    >
-      <PencilIcon className="w-4 h-4" />
-    </button>
+                <div className="flex gap-2">
+                  {/* Show / Hide */}
+                  <button
+                    onClick={() => toggleValueVisibility(cfg.key)}
+                    className="p-2 rounded bg-slate-600/20 text-slate-300 hover:bg-slate-600/30"
+                    title={visibleValues[cfg.key] ? "Hide value" : "Show value"}
+                  >
+                    {visibleValues[cfg.key] ? (
+                      <EyeSlashIcon className="w-4 h-4" />
+                    ) : (
+                      <EyeIcon className="w-4 h-4" />
+                    )}
+                  </button>
 
-    {/* Delete */}
-    <button
-      onClick={() => handleDeleteConfig(cfg.key)}
-      className="p-2 rounded bg-red-600/20 text-red-300 hover:bg-red-600/30"
-      title="Delete config"
-      disabled={saving}
-    >
-      <TrashIcon className="w-4 h-4" />
-    </button>
-  </div>
-</div>
+                  {/* Edit */}
+                  <button
+                    onClick={() => handleEditConfig(cfg)}
+                    className="p-2 rounded bg-blue-600/20 text-blue-300 hover:bg-blue-600/30"
+                    title="Edit config"
+                  >
+                    <PencilIcon className="w-4 h-4" />
+                  </button>
 
+                  {/* Delete */}
+                  <button
+                    onClick={() => handleDeleteConfig(cfg.key)}
+                    className="p-2 rounded bg-red-600/20 text-red-300 hover:bg-red-600/30"
+                    title="Delete config"
+                    disabled={saving}
+                  >
+                    <TrashIcon className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
 
-  <textarea
-    readOnly
-    value={
-      typeof cfg.value === "string"
-        ? cfg.value
-        : JSON.stringify(cfg.value, null, 2)
-    }
-    rows={3}
-    className="w-full p-3 rounded bg-transparent border border-white/10 text-gray-300 text-xs font-mono"
-  />
-</div>
-
+              <textarea
+                readOnly
+                value={
+                  visibleValues[cfg.key]
+                    ? typeof cfg.value === "string"
+                      ? cfg.value
+                      : JSON.stringify(cfg.value, null, 2)
+                    : getMaskedValue(cfg.value)
+                }
+                rows={3}
+                className="w-full p-3 rounded bg-transparent border border-white/10 text-gray-300 text-xs font-mono"
+              />
+            </div>
           ))
         )}
       </div>
@@ -366,4 +402,3 @@ JWT_SECRET → strong_random_secret
     </div>
   );
 }
-

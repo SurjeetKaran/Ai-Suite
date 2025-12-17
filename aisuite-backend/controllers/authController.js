@@ -60,108 +60,129 @@ exports.signup = async (req, res) => {
 
 // ------------------- UNIFIED LOGIN -------------------
 exports.login = async (req, res) => {
-    const { email, password } = req.body;
+  const { email, password } = req.body;
 
-    if (!email || !password) return res.status(400).json({ msg: 'Email and password required' });
-    if (!process.env.JWT_SECRET) return res.status(500).json({ msg: 'JWT secret not configured' });
+  if (!email || !password) {
+    return res.status(400).json({ msg: "Email and password required" });
+  }
 
-    log('INFO', `Unified login attempt for: ${email}`);
+  if (!process.env.JWT_SECRET) {
+    return res.status(500).json({ msg: "JWT secret not configured" });
+  }
 
-    try {
-        // ------------------------------------------
-        // 1️⃣ CHECK ADMIN (Highest Priority)
-        // ------------------------------------------
-        if (email === process.env.ADMIN_EMAIL) {
-            if (password !== process.env.ADMIN_PASSWORD) {
-                log('WARN', `Admin login failed (bad password): ${email}`);
-                return res.status(400).json({ msg: 'Invalid credentials' });
-            }
+  log("INFO", `Unified login attempt for: ${email}`);
 
-            const token = jwt.sign(
-                { email, role: 'admin' }, // 🔑 Role is 'admin'
-                process.env.JWT_SECRET,
-                { expiresIn: '1d' }
-            );
+  try {
+    // ------------------------------------------------
+    // Resolve ADMIN credentials (DB first, ENV fallback)
+    // ------------------------------------------------
+    const ADMIN_EMAIL =
+      global.SystemEnv?.ADMIN_EMAIL || process.env.ADMIN_EMAIL;
 
-            log('INFO', `Admin logged in: ${email}`);
-            return res.json({
-                token,
-                role: 'admin', // Frontend uses this to redirect to /admin/dashboard
-                user: { email, name: 'Super Admin' }
-            });
-        }
+    const ADMIN_PASSWORD =
+      global.SystemEnv?.ADMIN_PASSWORD || process.env.ADMIN_PASSWORD;
 
-        // ------------------------------------------
-        // 2️⃣ CHECK USER (Standard Users)
-        // ------------------------------------------
-        const user = await User.findOne({ email });
-        if (user) {
-            const isMatch = await bcrypt.compare(password, user.password);
-            if (!isMatch) {
-                log('WARN', `User login failed (bad password): ${email}`);
-                return res.status(400).json({ msg: 'Invalid credentials' });
-            }
+    // ------------------------------------------
+    // 1️⃣ CHECK ADMIN (Highest Priority)
+    // ------------------------------------------
+    if (ADMIN_EMAIL && email === ADMIN_EMAIL) {
+      if (!ADMIN_PASSWORD || password !== ADMIN_PASSWORD) {
+        log("WARN", `Admin login failed (bad password): ${email}`);
+        return res.status(401).json({ msg: "Invalid credentials" });
+      }
 
-            const token = jwt.sign(
-                { id: user._id, role: 'user' }, // 🔑 Role is 'user'
-                process.env.JWT_SECRET,
-                { expiresIn: '7d' }
-            );
+      const token = jwt.sign(
+        { email: ADMIN_EMAIL, role: "admin" },
+        process.env.JWT_SECRET,
+        { expiresIn: "7d" }
+      );
 
-            log('INFO', `User logged in: ${email}`);
-            return res.json({
-                token,
-                role: 'user', // Frontend redirects to /dashboard
-                user: {
-                    _id: user._id,
-                    name: user.name,
-                    email: user.email,
-                    subscription: user.subscription
-                }
-            });
-        }
+      log("INFO", `Admin logged in: ${ADMIN_EMAIL}`);
 
-        // ------------------------------------------
-        // 3️⃣ CHECK TEAM (Team Leaders)
-        // ------------------------------------------
-        const team = await Team.findOne({ email });
-        if (team) {
-            const isMatch = await bcrypt.compare(password, team.password);
-            if (!isMatch) {
-                log('WARN', `Team login failed (bad password): ${email}`);
-                return res.status(400).json({ msg: 'Invalid credentials' });
-            }
-
-            const token = jwt.sign(
-                { teamId: team._id, role: 'teamAdmin' }, // 🔑 Role is 'teamAdmin'
-                process.env.JWT_SECRET,
-                { expiresIn: '7d' }
-            );
-
-            log('INFO', `Team Admin logged in: ${email}`);
-            return res.json({
-                token,
-                role: 'teamAdmin', // Frontend redirects to /team/dashboard
-                user: {
-                    _id: team._id,
-                    name: team.name,
-                    email: team.email,
-                    isTeam: true
-                }
-            });
-        }
-
-        // ------------------------------------------
-        // 4️⃣ NO MATCH FOUND
-        // ------------------------------------------
-        log('WARN', `Login failed (User not found): ${email}`);
-        res.status(400).json({ msg: 'User not found' });
-
-    } catch (err) {
-        log('ERROR', `Login error for: ${email}`, err.stack);
-        res.status(500).json({ msg: 'Server error' });
+      return res.json({
+        token,
+        role: "admin",
+        user: {
+          email: ADMIN_EMAIL,
+          name: "Super Admin",
+        },
+      });
     }
+
+    // ------------------------------------------
+    // 2️⃣ CHECK USER (Standard Users)
+    // ------------------------------------------
+    const user = await User.findOne({ email });
+    if (user) {
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) {
+        log("WARN", `User login failed (bad password): ${email}`);
+        return res.status(401).json({ msg: "Invalid credentials" });
+      }
+
+      const token = jwt.sign(
+        { id: user._id, role: "user" },
+        process.env.JWT_SECRET,
+        { expiresIn: "7d" }
+      );
+
+      log("INFO", `User logged in: ${email}`);
+
+      return res.json({
+        token,
+        role: "user",
+        user: {
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+          subscription: user.subscription,
+        },
+      });
+    }
+
+    // ------------------------------------------
+    // 3️⃣ CHECK TEAM (Team Leaders)
+    // ------------------------------------------
+    const team = await Team.findOne({ email });
+    if (team) {
+      const isMatch = await bcrypt.compare(password, team.password);
+      if (!isMatch) {
+        log("WARN", `Team login failed (bad password): ${email}`);
+        return res.status(401).json({ msg: "Invalid credentials" });
+      }
+
+      const token = jwt.sign(
+        { teamId: team._id, role: "teamAdmin" },
+        process.env.JWT_SECRET,
+        { expiresIn: "7d" }
+      );
+
+      log("INFO", `Team Admin logged in: ${email}`);
+
+      return res.json({
+        token,
+        role: "teamAdmin",
+        user: {
+          _id: team._id,
+          name: team.name,
+          email: team.email,
+          isTeam: true,
+        },
+      });
+    }
+
+    // ------------------------------------------
+    // 4️⃣ NO MATCH FOUND
+    // ------------------------------------------
+    log("WARN", `Login failed (user not found): ${email}`);
+    return res.status(404).json({ msg: "User not found" });
+
+  } catch (err) {
+    log("ERROR", `Login error for: ${email}`, err.stack);
+    return res.status(500).json({ msg: "Server error" });
+  }
 };
+
 
 // ------------------- GET LOGGED-IN USER -------------------
 exports.getMe = async (req, res) => {

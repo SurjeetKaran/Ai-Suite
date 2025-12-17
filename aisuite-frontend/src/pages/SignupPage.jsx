@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import API from '../api/axios';
+import API, { API_BASE_URL } from '../api/axios';
 import ParticlesBackground from '../components/ParticlesBackground';
 
 const SignupPage = () => {
@@ -16,20 +16,14 @@ const SignupPage = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // -----------------------------
-  // BACKEND URL (Auto detect)
-  // -----------------------------
-  const API_URL =
-    window.location.hostname === "localhost"
-      ? "http://localhost:10000"
-      : "https://ai-suite-9bvf.onrender.com";
+  
 
   // -----------------------------
   // SOCIAL LOGIN POPUP HANDLER
   // -----------------------------
   const handleSocialLogin = (provider) => {
     const popup = window.open(
-      `${API_URL}/auth/${provider}`,
+      `${API_BASE_URL}/auth/${provider}`,
       "authPopup",
       "width=500,height=600,left=200,top=100"
     );

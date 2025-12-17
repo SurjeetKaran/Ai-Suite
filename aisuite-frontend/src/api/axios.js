@@ -49,4 +49,6 @@ API.interceptors.response.use(
   }
 );
 
+export const API_BASE_URL = API.defaults.baseURL;
 export default API;
+

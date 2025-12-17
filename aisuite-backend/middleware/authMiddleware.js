@@ -1,124 +1,74 @@
-// const jwt = require('jsonwebtoken');
-// const User = require('../models/User');
-// const Team = require('../models/Team');
-// const log = require('../utils/logger');
+const jwt = require("jsonwebtoken");
+const User = require("../models/User");
+const Team = require("../models/Team");
+const log = require("../utils/logger");
 
-// // ---------------------------
-// // Verify normal user token
-// // ---------------------------
-// exports.verifyToken = async (req, res, next) => {
-//   const token = req.header('Authorization')?.split(' ')[1];
-//   if (!token) return res.status(401).json({ msg: 'No token, authorization denied' });
+/**
+ * Helper: resolve JWT secret dynamically
+ */
+function getJwtSecret() {
+  return (
+    global.SystemEnv?.JWT_SECRET ||
+    process.env.JWT_SECRET
+  );
+}
 
-//   try {
-//     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-//     req.user = await User.findById(decoded.id);
-//     if (!req.user) {
-//       log('ERROR', 'User not found for token', { token });
-//       return res.status(401).json({ msg: 'User not found' });
-//     }
-//     log('INFO', `User verified: ${req.user.email}`);
-//     next();
-//   } catch (err) {
-//     log('ERROR', 'JWT verification failed for user', { error: err.message });
-//     res.status(401).json({ msg: 'Token is not valid' });
-//   }
-// };
+/**
+ * Helper: resolve Admin email dynamically
+ */
+function getAdminEmail() {
+  return (
+    global.SystemEnv?.ADMIN_EMAIL ||
+    process.env.ADMIN_EMAIL
+  );
+}
 
-// /**
-//  * Verify token for either Owner/Admin or Team Admin
-//  */
-// exports.verifyAdminOrTeamToken = async (req, res, next) => {
-//   const token = req.header("Authorization")?.split(" ")[1];
-//   if (!token) {
-//     log("WARN", "Authorization token missing");
-//     return res.status(401).json({ msg: "No token, authorization denied" });
-//   }
-
-//   try {
-//     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-//     // --------------------------
-//     // Case 1: Owner/Admin
-//     // --------------------------
-//     if (decoded.email === process.env.ADMIN_EMAIL) {
-//       req.admin = { email: decoded.email };
-//       log("INFO", `Owner admin verified: ${decoded.email}`);
-//       return next();
-//     }
-
-//     // --------------------------
-//     // Case 2: Team Admin / Leader
-//     // --------------------------
-//     if (decoded.role === "teamAdmin" && decoded.teamId) {
-//       const team = await Team.findById(decoded.teamId);
-//       if (!team) {
-//         log("WARN", `Team not found for token: ${decoded.teamId}`);
-//         return res.status(404).json({ msg: "Team not found" });
-//       }
-//       req.team = team;
-//       log("INFO", `Team admin verified: ${team.email} for team ${team.name}`);
-//       return next();
-//     }
-
-//     // --------------------------
-//     // Unauthorized
-//     // --------------------------
-//     log("WARN", "Invalid token role or missing permissions");
-//     return res.status(403).json({ msg: "Unauthorized" });
-
-//   } catch (err) {
-//     log("ERROR", "Token verification failed", { error: err.message });
-//     return res.status(401).json({ msg: "Token is not valid" });
-//   }
-// };
-
-const jwt = require('jsonwebtoken');
-const User = require('../models/User');
-const Team = require('../models/Team');
-const log = require('../utils/logger');
-
-// ---------------------------
-// Verify normal user token
-// ---------------------------
+/* =====================================================
+   VERIFY NORMAL USER TOKEN
+===================================================== */
 exports.verifyToken = async (req, res, next) => {
-  const token = req.header('Authorization')?.split(' ')[1];
+  const token = req.header("Authorization")?.split(" ")[1];
 
   if (!token) {
-    log('WARN', "Missing authorization token");
-    return res.status(401).json({ msg: 'No token, authorization denied' });
+    log("WARN", "Missing authorization token");
+    return res.status(401).json({ msg: "No token, authorization denied" });
+  }
+
+  const JWT_SECRET = getJwtSecret();
+  if (!JWT_SECRET) {
+    log("ERROR", "JWT_SECRET not configured");
+    return res.status(500).json({ msg: "Auth configuration error" });
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET);
 
-    req.user = await User.findById(decoded.id);
-
-    if (!req.user) {
-      log('ERROR', "User not found for token", { token });
-      return res.status(401).json({ msg: 'User not found' });
+    // Normal users must have an id
+    if (!decoded.id) {
+      return res.status(401).json({ msg: "Invalid user token" });
     }
 
-    log('INFO', `User verified: ${req.user.email}`);
+    const user = await User.findById(decoded.id);
+    if (!user) {
+      log("ERROR", "User not found for token", { token });
+      return res.status(401).json({ msg: "User not found" });
+    }
+
+    req.user = user;
+    log("INFO", `User verified: ${user.email}`);
     next();
 
   } catch (err) {
-    log('ERROR', "JWT verification failed for user", { error: err.message });
-    return res.status(401).json({ msg: 'Token is not valid' });
+    log("ERROR", "JWT verification failed for user", {
+      error: err.message,
+    });
+    return res.status(401).json({ msg: "Token is not valid" });
   }
 };
 
-
-
-// ---------------------------------------------------------------------
-// Verify token for either SUPER ADMIN (Owner) or Team Admin
-//
-// SUPER ADMIN → req.admin = { email }
-// TEAM ADMIN  → req.team = team document
-//
-// NOTE:
-// Team Admins should NOT get access to API Key Management UNLESS allowed.
-// ---------------------------------------------------------------------
+/* =====================================================
+   VERIFY ADMIN (OWNER) OR TEAM ADMIN
+===================================================== */
 exports.verifyAdminOrTeamToken = async (req, res, next) => {
   const token = req.header("Authorization")?.split(" ")[1];
 
@@ -127,21 +77,29 @@ exports.verifyAdminOrTeamToken = async (req, res, next) => {
     return res.status(401).json({ msg: "No token, authorization denied" });
   }
 
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  const JWT_SECRET = getJwtSecret();
+  const ADMIN_EMAIL = getAdminEmail();
 
-    // --------------------------
-    // Case 1: Super Admin / Owner
-    // --------------------------
-    if (decoded.email === process.env.ADMIN_EMAIL) {
+  if (!JWT_SECRET) {
+    log("ERROR", "JWT_SECRET not configured");
+    return res.status(500).json({ msg: "Auth configuration error" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+
+    /* --------------------------
+       CASE 1: SUPER ADMIN
+    -------------------------- */
+    if (ADMIN_EMAIL && decoded.email === ADMIN_EMAIL) {
       req.admin = { email: decoded.email };
       log("INFO", `Super admin verified: ${decoded.email}`);
       return next();
     }
 
-    // --------------------------
-    // Case 2: Team Admin / Leader
-    // --------------------------
+    /* --------------------------
+       CASE 2: TEAM ADMIN
+    -------------------------- */
     if (decoded.role === "teamAdmin" && decoded.teamId) {
       const team = await Team.findById(decoded.teamId);
 
@@ -151,7 +109,10 @@ exports.verifyAdminOrTeamToken = async (req, res, next) => {
       }
 
       req.team = team;
-      log("INFO", `Team admin verified: ${team.email} for team ${team.name}`);
+      log(
+        "INFO",
+        `Team admin verified: ${team.email} for team ${team.name}`
+      );
       return next();
     }
 
@@ -159,23 +120,16 @@ exports.verifyAdminOrTeamToken = async (req, res, next) => {
     return res.status(403).json({ msg: "Unauthorized" });
 
   } catch (err) {
-    log("ERROR", "Token verification failed", { error: err.message });
+    log("ERROR", "Token verification failed", {
+      error: err.message,
+    });
     return res.status(401).json({ msg: "Token is not valid" });
   }
 };
 
-
-
-
-// ---------------------------------------------------------------------
-// STRICT SUPER-ADMIN CHECK
-//
-// This is REQUIRED for load balancer features:
-// - API Keys CRUD
-// - LoadBalancerConfig
-//
-// Team Admins MUST NOT access these routes.
-// ---------------------------------------------------------------------
+/* =====================================================
+   VERIFY OWNER ADMIN ONLY (STRICT)
+===================================================== */
 exports.verifyOwnerAdminOnly = async (req, res, next) => {
   const token = req.header("Authorization")?.split(" ")[1];
 
@@ -184,26 +138,38 @@ exports.verifyOwnerAdminOnly = async (req, res, next) => {
     return res.status(401).json({ msg: "No token provided" });
   }
 
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  const JWT_SECRET = getJwtSecret();
+  const ADMIN_EMAIL = getAdminEmail();
 
-    if (decoded.email !== process.env.ADMIN_EMAIL) {
+  if (!JWT_SECRET || !ADMIN_EMAIL) {
+    log("ERROR", "Owner admin auth not configured properly");
+    return res.status(500).json({ msg: "Auth configuration error" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+
+    if (decoded.email !== ADMIN_EMAIL) {
       log("WARN", "Unauthorized access attempt to owner-admin-only route", {
-        attemptedBy: decoded.email
+        attemptedBy: decoded.email,
       });
-      return res.status(403).json({ msg: "Only the system owner can access this route" });
+      return res
+        .status(403)
+        .json({ msg: "Only the system owner can access this route" });
     }
 
     req.admin = { email: decoded.email };
     log("INFO", `Owner-admin verified: ${decoded.email}`);
-
     next();
 
   } catch (err) {
-    log("ERROR", "Owner admin token verification failed", { error: err.message });
+    log("ERROR", "Owner admin token verification failed", {
+      error: err.message,
+    });
     return res.status(401).json({ msg: "Token is not valid" });
   }
 };
+
 
 
 
