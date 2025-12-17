@@ -11,19 +11,25 @@ function getEncryptionSecret() {
 }
 
 function deriveKey(secret) {
-  return crypto.createHash("sha256").update(secret).digest();
+  // 🔥 HARD NORMALIZATION (CRITICAL)
+  const normalizedSecret = String(secret);
+  return crypto.createHash("sha256").update(normalizedSecret, "utf8").digest();
 }
 
-exports.encrypt = function (text) {
-  if (typeof text !== "string" || !text.trim()) {
-    logger("ERROR", "Encryption failed: invalid input", {
-      receivedType: typeof text,
-      value: text,
-    });
-    return null;
-  }
 
+exports.encrypt = function (text) {
   try {
+    // 🔥 HARD NORMALIZATION (MOST IMPORTANT FIX)
+    const normalized = String(text).trim();
+
+    if (!normalized) {
+      logger("ERROR", "Encryption failed: empty input after normalization", {
+        receivedType: typeof text,
+        value: text,
+      });
+      return null;
+    }
+
     const SECRET = getEncryptionSecret();
     if (!SECRET) {
       logger("ERROR", "Encryption failed: KEY_ENCRYPTION_SECRET not configured");
@@ -35,17 +41,22 @@ exports.encrypt = function (text) {
 
     const cipher = crypto.createCipheriv(ALGO, key, iv);
 
-    let encrypted = cipher.update(text, "utf8", "hex");
+    let encrypted = cipher.update(normalized, "utf8", "hex");
     encrypted += cipher.final("hex");
 
     const tag = cipher.getAuthTag().toString("hex");
 
     return `${iv.toString("hex")}:${tag}:${encrypted}`;
   } catch (err) {
-    logger("ERROR", "Encryption failed", { error: err.message });
+    logger("ERROR", "Encryption failed", {
+      reason: err.message,
+      inputType: typeof text,
+      inputValue: text,
+    });
     return null;
   }
 };
+
 
 exports.decrypt = function (encryptedText) {
   if (typeof encryptedText !== "string" || !encryptedText.includes(":")) {

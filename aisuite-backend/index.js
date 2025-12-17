@@ -3,11 +3,13 @@
  * ---------------------------------------------------
  * Application entry point
  *
- * - Loads environment variables (dotenv) as fallback
- * - Connects to MongoDB
- * - Loads dynamic SystemConfig into runtime memory
- * - Initializes cron jobs
- * - Starts Express server
+ * BOOT ORDER (IMPORTANT):
+ * 1. Load .env (fallback only)
+ * 2. Connect to MongoDB
+ * 3. Load SystemConfig into global.SystemEnv
+ * 4. Initialize Passport (OAuth + JWT)
+ * 5. Start cron jobs
+ * 6. Start Express server
  * ---------------------------------------------------
  */
 
@@ -30,10 +32,6 @@ const scheduleAPIKeyReset = require("./utils/resetAPIKeyUsage");
 // Utils
 const log = require("./utils/logger");
 
-// Passport (OAuth + JWT)
-const passport = require("passport");
-require("./config/passport");
-
 // Routes
 const authRoutes = require("./routes/auth");
 const socialAuthRoutes = require("./routes/socialAuth");
@@ -46,8 +44,6 @@ const app = express();
 
 /* =====================================================
    Helper: Load SystemConfig into Runtime Memory
-   - Enables DB-based env variables
-   - Avoids DB hits on every request
 ===================================================== */
 async function loadDynamicEnv() {
   try {
@@ -64,11 +60,12 @@ async function loadDynamicEnv() {
     log("ERROR", "Failed to load SystemConfig", {
       error: err.message,
     });
+    throw err;
   }
 }
 
 /* =====================================================
-   Middleware
+   Middleware (SAFE BEFORE PASSPORT)
 ===================================================== */
 app.use(
   cors({
@@ -82,10 +79,10 @@ app.use(
 );
 
 app.use(express.json());
-app.use(passport.initialize());
 
 /* =====================================================
-   Routes
+   Routes (Passport-dependent routes will work
+   because passport is initialized before server start)
 ===================================================== */
 app.use("/auth", authRoutes);
 app.use("/auth", socialAuthRoutes);
@@ -100,19 +97,15 @@ app.use("/", teamRoutes);
 async function startServer() {
   try {
     // ------------------------------------------
-    // Resolve MongoDB URI dynamically
+    // Resolve MongoDB URI (env fallback only)
     // ------------------------------------------
-    const MONGO_URI =
-      process.env.MONGO_URI || null; // fallback only
+    const MONGO_URI = process.env.MONGO_URI || null;
 
     if (!MONGO_URI) {
       throw new Error("MONGO_URI is not configured");
     }
 
-    await mongoose.connect(MONGO_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    await mongoose.connect(MONGO_URI);
 
     log("INFO", "MongoDB connected successfully");
 
@@ -120,6 +113,15 @@ async function startServer() {
     // Load SystemConfig AFTER DB connection
     // ------------------------------------------
     await loadDynamicEnv();
+
+    // ------------------------------------------
+    // Initialize Passport AFTER SystemConfig
+    // ------------------------------------------
+    const passport = require("passport");
+    require("./config/passport");
+    app.use(passport.initialize());
+
+    log("INFO", "Passport initialized with dynamic config");
 
     // ------------------------------------------
     // Start Cron Jobs
@@ -146,7 +148,7 @@ async function startServer() {
     log("ERROR", "Server startup failed", {
       error: err.message,
     });
-    process.exit(1); // hard fail if critical config missing
+    process.exit(1);
   }
 }
 

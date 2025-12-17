@@ -23,6 +23,15 @@ const providerHandlers = {
 };
 
 /**
+ * ✅ CHANGE 1: INTERNAL MODEL OVERRIDE
+ * ----------------------------------
+ * Groq supports LLaMA models only.
+ * We force SmartMix to use LLaMA-70B internally,
+ * regardless of user-requested model.
+ */
+const INTERNAL_GROQ_MODEL = "llama3-70b-8192";
+
+/**
  * SmartMix returns:
  * {
  *   chatGPT: { text: "...", tokensUsed: 123 },
@@ -85,13 +94,23 @@ async function smartMix(
           throw new Error(`No handler registered for provider: ${provider}`);
         }
 
+        /**
+         * ✅ CHANGE 2: LOGICAL MODEL RESOLUTION
+         * ------------------------------------
+         * We DO NOT pass user-requested model (claude/gemini)
+         * to GroqProvider.
+         * We always resolve to LLaMA-70B internally.
+         */
+        const resolvedModel = INTERNAL_GROQ_MODEL;
+
         log("INFO", "[SmartMix] Provider selected", {
           provider,
-          model
+          requestedModel: model,
+          resolvedModel
         });
 
-        // 🔥 Call provider
-        result = await handler(prompt, model);
+        // 🔥 Call provider with resolved Groq model
+        result = await handler(prompt, resolvedModel);
 
         // 🧮 Update provider token usage
         await updateProviderUsage(provider, result.tokensUsed || 0);
@@ -101,7 +120,7 @@ async function smartMix(
 
         log("ERROR", "[SmartMix] Provider attempt failed", {
           provider,
-          model,
+          requestedModel: model,
           error: err.message
         });
 
@@ -139,4 +158,3 @@ async function smartMix(
 }
 
 module.exports = { smartMix };
-

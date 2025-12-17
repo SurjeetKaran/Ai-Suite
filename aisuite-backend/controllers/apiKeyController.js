@@ -27,9 +27,7 @@ async function syncProvidersWithLB() {
     }));
 
     let config = await LoadBalancerConfig.findOne();
-    if (!config) {
-        config = new LoadBalancerConfig();
-    }
+    if (!config) config = new LoadBalancerConfig();
 
     config.providers = providerRules;
     await config.save();
@@ -57,11 +55,11 @@ exports.getAllKeys = async (req, res) => {
 };
 
 /**
- * CREATE KEY
+ * CREATE KEY  ✅ FIXED
  */
 exports.createKey = async (req, res) => {
     try {
-        const {
+        let {
             provider,
             label,
             key,
@@ -71,7 +69,28 @@ exports.createKey = async (req, res) => {
         } = req.body;
 
         if (!provider || !key) {
-            return res.status(400).json({ message: "Provider and key are required" });
+            return res.status(400).json({
+                message: "Provider and API key are required"
+            });
+        }
+
+        // 🚨 HARD GUARD (CRITICAL FIX)
+        if (typeof key !== "string") {
+            logger("ERROR", "Invalid API key type received", {
+                provider,
+                receivedType: typeof key,
+                value: key
+            });
+            return res.status(400).json({
+                message: "API key must be a string"
+            });
+        }
+
+        key = key.trim();
+        if (!key) {
+            return res.status(400).json({
+                message: "API key cannot be empty"
+            });
         }
 
         const existingLabel = await APIKey.findOne({ provider, label });
@@ -83,7 +102,9 @@ exports.createKey = async (req, res) => {
 
         const encryptedKey = encrypt(key);
         if (!encryptedKey) {
-            return res.status(500).json({ message: "Failed to encrypt API key" });
+            return res.status(500).json({
+                message: "Failed to encrypt API key"
+            });
         }
 
         const newKey = await APIKey.create({
@@ -100,7 +121,10 @@ exports.createKey = async (req, res) => {
         await syncProvidersWithLB();
 
         logger("INFO", "API key created", { provider, label });
-        res.status(201).json({ message: "API key added", key: newKey });
+        res.status(201).json({
+            message: "API key added successfully",
+            key: newKey
+        });
 
     } catch (err) {
         logger("ERROR", "Failed to create API key", { error: err.message });
@@ -109,7 +133,7 @@ exports.createKey = async (req, res) => {
 };
 
 /**
- * UPDATE KEY
+ * UPDATE KEY  ✅ FIXED
  */
 exports.updateKey = async (req, res) => {
     try {
@@ -117,13 +141,33 @@ exports.updateKey = async (req, res) => {
         const update = req.body;
 
         if (update.key) {
-            update.key = encrypt(update.key);
+            // 🚨 HARD GUARD (CRITICAL FIX)
+            if (typeof update.key !== "string") {
+                logger("ERROR", "Invalid API key type on update", {
+                    id,
+                    receivedType: typeof update.key,
+                    value: update.key
+                });
+                return res.status(400).json({
+                    message: "API key must be a string"
+                });
+            }
+
+            update.key = encrypt(update.key.trim());
+            if (!update.key) {
+                return res.status(500).json({
+                    message: "Failed to encrypt API key"
+                });
+            }
         }
 
         const updated = await APIKey.findByIdAndUpdate(id, update, { new: true });
 
         logger("INFO", "API key updated", { id });
-        res.json({ message: "API key updated", key: updated });
+        res.json({
+            message: "API key updated successfully",
+            key: updated
+        });
 
     } catch (err) {
         logger("ERROR", "Failed to update API key", { error: err.message });
@@ -163,10 +207,12 @@ exports.toggleStatus = async (req, res) => {
             active: key.isActive
         });
 
-        res.json({ message: "Status updated", isActive: key.isActive });
+        res.json({
+            message: "Status updated",
+            isActive: key.isActive
+        });
     } catch (err) {
         logger("ERROR", "Failed to toggle key status", { error: err.message });
         res.status(500).json({ message: "Failed to toggle key" });
     }
 };
-
