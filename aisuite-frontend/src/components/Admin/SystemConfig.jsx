@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import API from "../../api/axios";
 import log from "../../utils/logger";
 import dialog from "../../utils/dialogService";
-import { PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
+import { PlusIcon, TrashIcon,PencilIcon } from "@heroicons/react/24/outline";
 
 const MODELS_KEY = "AVAILABLE_MODELS";
 
@@ -94,6 +94,22 @@ export default function SystemConfig() {
   };
 
   /* ---------------- generic config logic ---------------- */
+
+  const handleEditConfig = (cfg) => {
+  setNewKey(cfg.key);
+
+  if (typeof cfg.value === "string") {
+    setNewValue(cfg.value);
+  } else {
+    setNewValue(JSON.stringify(cfg.value, null, 2));
+  }
+
+  window.scrollTo({
+    top: 0,
+    behavior: "smooth",
+  });
+};
+
 
   const handleSaveGenericConfig = async () => {
     const key = newKey.trim();
@@ -234,13 +250,14 @@ JWT_SECRET → strong_random_secret
           className="w-full p-3 rounded bg-transparent border border-white/10 text-white placeholder-gray-400 font-mono text-sm"
         />
 
-        <button
-          onClick={handleSaveGenericConfig}
-          disabled={saving}
-          className="px-4 py-2 bg-emerald-600 rounded text-white disabled:opacity-50"
-        >
-          Save System Config
-        </button>
+      <button
+  onClick={handleSaveGenericConfig}
+>
+  {configs.some(c => c.key === newKey)
+    ? "Update System Config"
+    : "Save System Config"}
+</button>
+
       </div>
 
       {/* ---------------- EXISTING CONFIGS ---------------- */}
@@ -251,19 +268,31 @@ JWT_SECRET → strong_random_secret
           <div className="text-gray-400">Loading...</div>
         ) : (
           configs.map((cfg) => (
-            <div key={cfg.key} className="space-y-1">
-              <div className="text-xs text-gray-400">{cfg.key}</div>
-              <textarea
-                readOnly
-                value={
-                  typeof cfg.value === "string"
-                    ? cfg.value
-                    : JSON.stringify(cfg.value, null, 2)
-                }
-                rows={3}
-                className="w-full p-3 rounded bg-transparent border border-white/10 text-gray-300 text-xs"
-              />
-            </div>
+          <div key={cfg.key} className="space-y-2 border border-white/5 rounded-xl p-3">
+  <div className="flex items-center justify-between">
+    <div className="text-xs text-gray-400 font-mono">{cfg.key}</div>
+
+    <button
+      onClick={() => handleEditConfig(cfg)}
+      className="p-2 rounded bg-blue-600/20 text-blue-300 hover:bg-blue-600/30"
+      title="Edit config"
+    >
+      <PencilIcon className="w-4 h-4" />
+    </button>
+  </div>
+
+  <textarea
+    readOnly
+    value={
+      typeof cfg.value === "string"
+        ? cfg.value
+        : JSON.stringify(cfg.value, null, 2)
+    }
+    rows={3}
+    className="w-full p-3 rounded bg-transparent border border-white/10 text-gray-300 text-xs font-mono"
+  />
+</div>
+
           ))
         )}
       </div>
