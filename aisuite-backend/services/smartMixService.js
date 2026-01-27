@@ -1,49 +1,44 @@
-const { buildAllPrompts } = require("../utils/promptHelper");
+const { buildModulePrompt } = require("../utils/promptHelper");
 const log = require("../utils/logger");
 
-// Provider balancer
-const {
-  selectProvider,
-  updateProviderUsage
-} = require("../utils/providerBalancer");
+// Provider usage tracker
+const { updateProviderUsage } = require("../utils/providerBalancer");
 
 // Provider handlers
-const { callGroqProvider } = require("./providers/groqProvider");
-// const { callOpenAIProvider } = require("./providers/openaiProvider");
-// const { callClaudeProvider } = require("./providers/anthropicProvider");
+const { callOpenAIProvider } = require("./providers/openaiProvider");
+const { callAnthropicProvider } = require("./providers/anthropicProvider");
+const { callDeepSeekProvider } = require("./providers/deepseekProvider");
+const { callXAIProvider } = require("./providers/xaiProvider");
 
-/**
- * 🔥 ONE-TIME provider registry
- * Add new providers HERE only (backend-only change)
- */
-const providerHandlers = {
-  groq: callGroqProvider,
-  // openai: callOpenAIProvider,
-  // anthropic: callClaudeProvider,
+const MODEL_PROVIDER_MAP = {
+  // OpenAI
+  "gpt-4o": "openai",
+  "gpt-5-nano": "openai",
+
+  // Anthropic
+  "claude-3-5-sonnet": "anthropic",
+  "claude-3-opus": "anthropic",
+
+  // DeepSeek
+  "deepseek-chat": "deepseek",
+  "deepseek-coder": "deepseek",
+
+  // xAI
+  "grok-4-latest": "xai"
 };
 
-/**
- * ✅ CHANGE 1: INTERNAL MODEL OVERRIDE
- * ----------------------------------
- * Groq supports LLaMA models only.
- * We force SmartMix to use LLaMA-70B internally,
- * regardless of user-requested model.
- */
-const INTERNAL_GROQ_MODEL = "llama3-70b-8192";
+const providerHandlers = {
+  openai: callOpenAIProvider,
+  anthropic: callAnthropicProvider,
+  deepseek: callDeepSeekProvider,
+  xai: callXAIProvider
+};
 
-/**
- * SmartMix returns:
- * {
- *   chatGPT: { text: "...", tokensUsed: 123 },
- *   gemini:  { text: "...", tokensUsed: 55 },
- *   claude:  { text: "...", tokensUsed: 88 }
- * }
- */
 async function smartMix(
   input,
   type = "text",
   history = [],
-  activeModels = ["chatGPT", "gemini", "claude"]
+  activeModels = []
 ) {
   log("INFO", "[SmartMix] Started", {
     type,
@@ -51,7 +46,7 @@ async function smartMix(
     activeModels
   });
 
-  // 1️⃣ Add conversation history
+  // 1️⃣ Build history-aware input
   let finalInput = input;
   if (history?.length > 0) {
     let combined = "Conversation History:\n";
@@ -62,84 +57,40 @@ async function smartMix(
     finalInput = combined;
   }
 
-  // 2️⃣ Prepare prompts
-  const prompts = buildAllPrompts(finalInput, type);
+  // 2️⃣ Build module-specific prompt (ONCE)
+  const modulePrompt = buildModulePrompt(finalInput, type);
+
   const outputs = {};
 
-  // 3️⃣ Process each active model
+  // 3️⃣ Process each requested model
   for (const model of activeModels) {
-    const prompt = prompts[model];
-    if (!prompt) continue;
+    let result;
 
-    let result = null;
-    let lastError = null;
-    const triedProviders = new Set();
-
-    // 🔁 Provider-level failover loop
-    while (!result) {
-      let provider;
-
-      try {
-        provider = await selectProvider();
-
-        // Avoid retrying same provider
-        if (triedProviders.has(provider)) {
-          throw new Error("All providers already attempted");
-        }
-
-        triedProviders.add(provider);
-
-        const handler = providerHandlers[provider];
-        if (!handler) {
-          throw new Error(`No handler registered for provider: ${provider}`);
-        }
-
-        /**
-         * ✅ CHANGE 2: LOGICAL MODEL RESOLUTION
-         * ------------------------------------
-         * We DO NOT pass user-requested model (claude/gemini)
-         * to GroqProvider.
-         * We always resolve to LLaMA-70B internally.
-         */
-        const resolvedModel = INTERNAL_GROQ_MODEL;
-
-        log("INFO", "[SmartMix] Provider selected", {
-          provider,
-          requestedModel: model,
-          resolvedModel
-        });
-
-        // 🔥 Call provider with resolved Groq model
-        result = await handler(prompt, resolvedModel);
-
-        // 🧮 Update provider token usage
-        await updateProviderUsage(provider, result.tokensUsed || 0);
-
-      } catch (err) {
-        lastError = err;
-
-        log("ERROR", "[SmartMix] Provider attempt failed", {
-          provider,
-          requestedModel: model,
-          error: err.message
-        });
-
-        // Stop retrying after all known providers attempted
-        if (triedProviders.size >= Object.keys(providerHandlers).length) {
-          break;
-        }
+    try {
+      const provider = MODEL_PROVIDER_MAP[model];
+      if (!provider) {
+        throw new Error(`No provider mapped for model: ${model}`);
       }
-    }
 
-    // Final fallback if all providers fail
-    if (!result) {
-      log("ERROR", "[SmartMix] All providers failed", {
+      const handler = providerHandlers[provider];
+      if (!handler) {
+        throw new Error(`No handler registered for provider: ${provider}`);
+      }
+
+      log("INFO", "[SmartMix] Routing", { model, provider });
+
+      result = await handler(modulePrompt, model);
+
+      await updateProviderUsage(provider, result.tokensUsed || 0);
+
+    } catch (err) {
+      log("ERROR", "[SmartMix] Failed", {
         model,
-        error: lastError?.message
+        error: err.message
       });
 
       result = {
-        text: "All AI providers are temporarily unavailable. Please try again later.",
+        text: "AI model is temporarily unavailable.",
         tokensUsed: 0
       };
     }

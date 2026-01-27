@@ -3,21 +3,8 @@ const QueryHistory = require('../models/QueryHistory');
 const { smartMix } = require('../services/smartMixService');
 
 /**
- * Provider map
- */
-const MODEL_TO_PROVIDER = {
-  chatGPT: 'openai',
-  gpt: 'openai',
-  claude: 'anthropic',
-  gemini: 'google',
-  groq: 'groq'
-};
-
-// ✅ SINGLE SOURCE OF TRUTH FOR MODELS
-const ALL_MODELS = ["chatGPT", "gemini", "claude"];
-
-/**
- * Generate conversation title from first user input
+ * Generate a conversation title from the first user message
+ * (used only once per new chat)
  */
 function generateTitleFromInput(input) {
   return input
@@ -27,87 +14,34 @@ function generateTitleFromInput(input) {
 }
 
 /**
- * Normalize output
- */
-function normalizeOutputEntry(entry) {
-  const empty = {
-    text: '',
-    total: 0,
-    modelTokens: {},
-    providerTokens: {}
-  };
-
-  if (entry == null) return empty;
-  if (typeof entry === 'string') return { ...empty, text: entry };
-
-  const text = entry.text || entry.output || entry.result || entry.message || '';
-  const total =
-    typeof entry.totalTokens === 'number' ? entry.totalTokens :
-    typeof entry.tokensUsed === 'number' ? entry.tokensUsed :
-    typeof entry.total === 'number' ? entry.total :
-    0;
-
-  return {
-    text,
-    total,
-    modelTokens: entry.modelTokens || {},
-    providerTokens: entry.providerTokens || {}
-  };
-}
-
-/**
- * Aggregate token data
- */
-function aggregateTokenData(normalizedOutputs) {
-  const agg = {
-    totalTokens: 0,
-    modelTokens: {},
-    providerTokens: {}
-  };
-
-  for (const modelKey of Object.keys(normalizedOutputs)) {
-    const n = normalizedOutputs[modelKey];
-    if (!n) continue;
-
-    agg.totalTokens += n.total || 0;
-
-    if (n.modelTokens && Object.keys(n.modelTokens).length) {
-      for (const mk of Object.keys(n.modelTokens)) {
-        agg.modelTokens[mk] = (agg.modelTokens[mk] || 0) + n.modelTokens[mk];
-      }
-    } else {
-      agg.modelTokens[modelKey] = (agg.modelTokens[modelKey] || 0) + n.total;
-    }
-
-    if (n.providerTokens && Object.keys(n.providerTokens).length) {
-      for (const pk of Object.keys(n.providerTokens)) {
-        agg.providerTokens[pk] = (agg.providerTokens[pk] || 0) + n.providerTokens[pk];
-      }
-    } else {
-      const provider = MODEL_TO_PROVIDER[modelKey] || 'unknown';
-      agg.providerTokens[provider] = (agg.providerTokens[provider] || 0) + n.total;
-    }
-  }
-
-  return agg;
-}
-
-/**
  * POST /smartmix/process
+ *
+ * Frontend payload (CONFIRMED):
+ * {
+ *   input: string,
+ *   type: "CareerGPT" | "StudyGPT" | "ContentGPT",
+ *   conversationId: string | null,
+ *   activeModels: ["gpt-5-nano", "claude-3-5-sonnet", ...]
+ * }
+ *
+ * IMPORTANT DESIGN RULE:
+ * - Backend TRUSTS frontend model list
+ * - Backend NEVER rewrites model names
+ * - Provider selection happens inside smartMixService
  */
 exports.processSmartMix = async (req, res) => {
   try {
-    const { input, type } = req.body;
+    const { input, type, activeModels, conversationId } = req.body;
     const userId = req.user._id;
 
-    // 🔐 Sanitize activeModels
-    let activeModels = Array.isArray(req.body.activeModels)
-      ? req.body.activeModels.filter(m => ALL_MODELS.includes(m))
-      : ALL_MODELS;
+    // 🛡️ Basic validation
+    if (!Array.isArray(activeModels) || activeModels.length === 0) {
+      return res.status(400).json({
+        msg: "No models provided"
+      });
+    }
 
-    if (!activeModels.length) activeModels = ALL_MODELS;
-
-    const isNewChat = !req.body.conversationId;
+    const isNewChat = !conversationId;
 
     log("INFO", "[Controller] SmartMix request", {
       user: req.user.email,
@@ -115,12 +49,15 @@ exports.processSmartMix = async (req, res) => {
       activeModels
     });
 
-    // --------------------------------------------------
-    // LOAD OR CREATE CONVERSATION
-    // (ownership + limits already validated by middleware)
-    // --------------------------------------------------
+    /**
+     * smartmixGuard middleware already:
+     * - validated ownership
+     * - enforced limits
+     * - attached conversation to req if exists
+     */
     let conversation = req.conversation;
 
+    // 🆕 Create new conversation if needed
     if (!conversation) {
       conversation = new QueryHistory({
         userId,
@@ -129,90 +66,47 @@ exports.processSmartMix = async (req, res) => {
       });
     }
 
-    // --------------------------------------------------
-    // USER MESSAGE
-    // --------------------------------------------------
+    // 👤 USER MESSAGE
     conversation.messages.push({
       role: "user",
       content: input,
-      timestamp: new Date(),
-      tokenUsage: {
-        total: 0,
-        modelTokens: {},
-        providerTokens: {}
-      }
+      timestamp: new Date()
     });
 
-    // Set title only once (first message)
+    // 🏷️ Set title only once (first message of new chat)
     if (isNewChat && conversation.messages.length === 1) {
       conversation.title = generateTitleFromInput(input);
     }
 
-    // --------------------------------------------------
-    // SMARTMIX PROCESSING
-    // --------------------------------------------------
-    const rawOutputs = await smartMix(
+    /**
+     * 🔥 CORE CALL
+     * - input → user text (history injected inside smartMix)
+     * - type → module (CareerGPT / StudyGPT / ContentGPT)
+     * - conversation.messages → history
+     * - activeModels → REAL model IDs from frontend
+     */
+    const outputs = await smartMix(
       input,
       type,
       conversation.messages,
       activeModels
     );
 
-    // Normalize outputs
-    const normalized = {};
-    for (const modelKey of activeModels) {
-      normalized[modelKey] = normalizeOutputEntry(rawOutputs?.[modelKey]);
-    }
-
-    const aggregated = aggregateTokenData(normalized);
-
-    // --------------------------------------------------
-    // ASSISTANT MESSAGE
-    // --------------------------------------------------
+    // 🤖 ASSISTANT MESSAGE
     conversation.messages.push({
       role: "assistant",
       content: "AI Response",
-      individualOutputs: rawOutputs || {},
-      timestamp: new Date(),
-      tokenUsage: {
-        total: aggregated.totalTokens,
-        modelTokens: aggregated.modelTokens,
-        providerTokens: aggregated.providerTokens
-      }
+      individualOutputs: outputs,
+      timestamp: new Date()
     });
 
-    // --------------------------------------------------
-    // CONVERSATION-LEVEL AGGREGATION
-    // --------------------------------------------------
     conversation.lastUpdated = new Date();
-    conversation.totalTokens =
-      (conversation.totalTokens || 0) + aggregated.totalTokens;
-
-    conversation.modelTokens = conversation.modelTokens || {};
-    for (const mk of Object.keys(aggregated.modelTokens)) {
-      conversation.modelTokens[mk] =
-        (conversation.modelTokens[mk] || 0) + aggregated.modelTokens[mk];
-    }
-
-    conversation.providerTokens = conversation.providerTokens || {};
-    for (const pk of Object.keys(aggregated.providerTokens)) {
-      conversation.providerTokens[pk] =
-        (conversation.providerTokens[pk] || 0) + aggregated.providerTokens[pk];
-    }
-
     await conversation.save();
 
-    // --------------------------------------------------
-    // RESPONSE
-    // --------------------------------------------------
+    // 📤 RESPONSE (frontend expects this exact shape)
     return res.json({
       conversationId: conversation._id,
-      outputs: rawOutputs,
-      tokenSummary: {
-        totalTokens: aggregated.totalTokens,
-        modelTokens: aggregated.modelTokens,
-        providerTokens: aggregated.providerTokens
-      }
+      outputs
     });
 
   } catch (err) {
@@ -228,9 +122,9 @@ exports.processSmartMix = async (req, res) => {
   }
 };
 
-
 /**
  * GET /smartmix/history/:id
+ * Fetch a full conversation (read-only)
  */
 exports.getConversationById = async (req, res) => {
   try {
@@ -252,6 +146,7 @@ exports.getConversationById = async (req, res) => {
 
 /**
  * DELETE /smartmix/history/:id
+ * Delete a conversation owned by the user
  */
 exports.deleteConversationById = async (req, res) => {
   try {
@@ -261,13 +156,17 @@ exports.deleteConversationById = async (req, res) => {
     });
 
     if (!deleted) {
-      return res.status(404).json({ msg: "Conversation not found or unauthorized" });
+      return res.status(404).json({
+        msg: "Conversation not found or unauthorized"
+      });
     }
 
-    res.json({ msg: "Conversation deleted successfully", id: req.params.id });
+    res.json({
+      msg: "Conversation deleted successfully",
+      id: req.params.id
+    });
   } catch (err) {
     log("ERROR", "Delete conversation failed", err);
     res.status(500).json({ msg: "Server error" });
   }
 };
-

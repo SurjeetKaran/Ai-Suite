@@ -1,67 +1,120 @@
 const mongoose = require('mongoose');
-const log = require('../utils/logger');
 
-// 1. Define a Schema for individual messages within a chat
+/**
+ * Message schema
+ * Represents a single user or assistant message
+ */
 const MessageSchema = new mongoose.Schema({
   role: {
     type: String,
-    required: true,
-    enum: ['user', 'assistant']
+    enum: ['user', 'assistant'],
+    required: true
   },
 
-  content: { type: String, required: true },
+  content: {
+    type: String,
+    required: true
+  },
 
-  // NOW SUPPORTS OBJECTS LIKE { text, tokensUsed }
+  /**
+   * individualOutputs example:
+   * {
+   *   "gpt-5-nano": { text, tokensUsed },
+   *   "claude-3-5-sonnet": { text, tokensUsed }
+   * }
+   */
   individualOutputs: {
     type: mongoose.Schema.Types.Mixed,
     default: {}
   },
 
-  // Token usage
-  // Token usage can be either a per-message summary object
-  // (e.g. { model: 'chatGPT', provider: 'openai', tokens: 123 })
-  // or an aggregated object keyed by model/provider. Use Mixed to allow both shapes.
+  /**
+   * tokenUsage is optional and flexible:
+   * - can store per-message token stats
+   * - kept as Mixed for backward compatibility
+   */
   tokenUsage: {
     type: mongoose.Schema.Types.Mixed,
     default: null
   },
 
-  timestamp: { type: Date, default: Date.now }
+  timestamp: {
+    type: Date,
+    default: Date.now
+  }
 });
 
-
-// 2. Define the Main Schema for the Chat Thread
+/**
+ * Conversation schema
+ * Represents a full chat thread
+ */
 const ConversationSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  title: { type: String, default: 'New Chat' },
-  moduleType: { type: String, required: true },
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+
+  title: {
+    type: String,
+    default: 'New Chat'
+  },
+
+  /**
+   * Module type used for prompt generation
+   * e.g. CareerGPT, StudyGPT, ContentGPT
+   */
+  moduleType: {
+    type: String,
+    required: true
+  },
+
   messages: [MessageSchema],
 
-  // 🆕 NEW: Conversation-level analytics (required for user analytics page)
-  totalTokens: { type: Number, default: 0 },
+  /**
+   * Conversation-level token analytics
+   * (aggregated over time)
+   */
+  totalTokens: {
+    type: Number,
+    default: 0
+  },
 
+  /**
+   * Model-level token usage
+   * DYNAMIC KEYS (no hard-coded models)
+   * Example:
+   * {
+   *   "gpt-5-nano": 1200,
+   *   "claude-3-5-sonnet": 980
+   * }
+   */
   modelTokens: {
-    type: Object,
-    default: {
-      chatGPT: 0,
-      gemini: 0,
-      claude: 0,
-      groq: 0
-    }
+    type: Map,
+    of: Number,
+    default: {}
   },
 
+  /**
+   * Provider-level token usage
+   * Example:
+   * {
+   *   "openai": 1200,
+   *   "anthropic": 980
+   * }
+   */
   providerTokens: {
-    type: Object,
-    default: {
-      groq: 0,
-      openai: 0,
-      anthropic: 0,
-      google: 0
-    }
+    type: Map,
+    of: Number,
+    default: {}
   },
 
-  lastUpdated: { type: Date, default: Date.now }
+  lastUpdated: {
+    type: Date,
+    default: Date.now
+  }
 });
 
 module.exports = mongoose.model('Conversation', ConversationSchema);
+
 
