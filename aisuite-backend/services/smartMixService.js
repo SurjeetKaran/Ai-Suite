@@ -23,7 +23,7 @@ const MODEL_PROVIDER_MAP = {
 
   // Groq
   "mixtral-8x7b-32768": "groq",
-  "llama-3-70b-8192": "groq",
+  "llama-3.3-70b-versatile": "groq",
   "llama-3-8b-8192": "groq"
 };
 
