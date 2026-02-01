@@ -60,7 +60,10 @@ async function smartMix(
     let result;
 
     try {
-      const provider = MODEL_PROVIDER_MAP[model];
+      // 🔥 NORMALIZE MODEL ID TO LOWERCASE
+      const normalizedModel = String(model).toLowerCase().trim();
+      
+      const provider = MODEL_PROVIDER_MAP[normalizedModel];
       if (!provider) {
         throw new Error(`No provider mapped for model: ${model}`);
       }
@@ -70,9 +73,9 @@ async function smartMix(
         throw new Error(`No handler registered for provider: ${provider}`);
       }
 
-      log("INFO", "[SmartMix] Routing", { model, provider });
+      log("INFO", "[SmartMix] Routing", { model: normalizedModel, provider });
 
-      result = await handler(modulePrompt, model);
+      result = await handler(modulePrompt, normalizedModel);
 
       await updateProviderUsage(provider, result.tokensUsed || 0);
 

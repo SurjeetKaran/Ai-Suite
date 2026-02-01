@@ -4,6 +4,9 @@ const { decrypt } = require("./keyEncryptor");
 const logger = require("../utils/logger");
 
 async function selectKey(provider) {
+    // 🔥 NORMALIZE PROVIDER TO LOWERCASE
+    provider = provider.toLowerCase().trim();
+
     const config = await LoadBalancerConfig.findOne() || { strategy: "weighted" };
 
     let keys = await APIKey.find({

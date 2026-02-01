@@ -74,7 +74,10 @@ exports.createKey = async (req, res) => {
             });
         }
 
-        // 🚨 HARD GUARD (CRITICAL FIX)
+        // � NORMALIZE PROVIDER TO LOWERCASE (CRITICAL FIX)
+        provider = provider.toLowerCase().trim();
+
+        // �🚨 HARD GUARD (CRITICAL FIX)
         if (typeof key !== "string") {
             logger("ERROR", "Invalid API key type received", {
                 provider,
@@ -139,6 +142,11 @@ exports.updateKey = async (req, res) => {
     try {
         const { id } = req.params;
         const update = req.body;
+
+        // 🔥 NORMALIZE PROVIDER TO LOWERCASE IF PROVIDED
+        if (update.provider) {
+            update.provider = update.provider.toLowerCase().trim();
+        }
 
         if (update.key) {
             // 🚨 HARD GUARD (CRITICAL FIX)
