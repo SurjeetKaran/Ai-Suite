@@ -9,6 +9,7 @@ const { callOpenAIProvider } = require("./providers/openaiProvider");
 const { callAnthropicProvider } = require("./providers/anthropicProvider");
 const { callDeepSeekProvider } = require("./providers/deepseekProvider");
 const { callXAIProvider } = require("./providers/xaiProvider");
+const { callGoogleProvider } = require("./providers/googleProvider");
 
 const MODEL_PROVIDER_MAP = {
   // OpenAI
@@ -24,14 +25,18 @@ const MODEL_PROVIDER_MAP = {
   "deepseek-coder": "deepseek",
 
   // xAI
-  "grok-4-latest": "xai"
+  "grok-4-latest": "xai",
+
+  // Google Gemini
+  "gemini-2.0-flash": "google"
 };
 
 const providerHandlers = {
   openai: callOpenAIProvider,
   anthropic: callAnthropicProvider,
   deepseek: callDeepSeekProvider,
-  xai: callXAIProvider
+  xai: callXAIProvider,
+  google: callGoogleProvider
 };
 
 async function smartMix(
