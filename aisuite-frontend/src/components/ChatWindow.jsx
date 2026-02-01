@@ -2,7 +2,6 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { useChatStore } from "../store/chatStore";
-import ReactMarkdown from "react-markdown";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   SparklesIcon,
@@ -10,6 +9,7 @@ import {
   CubeTransparentIcon,
 } from "@heroicons/react/24/solid";
 import log from "../utils/logger";
+import MarkdownRenderer from "./MarkdownRenderer";
 
 /* =====================================================
  * DEFAULT PROMPTS (UNCHANGED UX)
@@ -53,9 +53,9 @@ const iconForModelName = (name = "") => {
 };
 
 /* =====================================================
- * TYPING EFFECT
+ * ANIMATED MARKDOWN (WITH TYPING EFFECT)
  * ===================================================== */
-const TypingEffect = ({ text = "", animate }) => {
+const AnimatedMarkdown = ({ text = "", animate }) => {
   const [displayed, setDisplayed] = useState(animate ? "" : text);
 
   useEffect(() => {
@@ -66,15 +66,15 @@ const TypingEffect = ({ text = "", animate }) => {
 
     let i = 0;
     const id = setInterval(() => {
-      setDisplayed((prev) => prev + text[i]);
+      setDisplayed(text.slice(0, i + 1));
       i++;
       if (i >= text.length) clearInterval(id);
-    }, 16);
+    }, 20);
 
     return () => clearInterval(id);
   }, [text, animate]);
 
-  return <ReactMarkdown>{displayed}</ReactMarkdown>;
+  return <MarkdownRenderer content={displayed} />;
 };
 
 /* =====================================================
@@ -230,7 +230,7 @@ export default function ChatWindow() {
 
                             {/* MODEL OUTPUT */}
                             <div className="p-4 text-sm text-gray-300">
-                              <TypingEffect
+                              <AnimatedMarkdown
                                 text={extractText(value)}
                                 animate={msg.animate}
                               />
