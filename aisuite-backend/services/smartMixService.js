@@ -6,8 +6,6 @@ const { updateProviderUsage } = require("../utils/providerBalancer");
 
 // Provider handlers
 const { callOpenAIProvider } = require("./providers/openaiProvider");
-const { callAnthropicProvider } = require("./providers/anthropicProvider");
-const { callDeepSeekProvider } = require("./providers/deepseekProvider");
 const { callXAIProvider } = require("./providers/xaiProvider");
 const { callGoogleProvider } = require("./providers/googleProvider");
 
@@ -15,14 +13,6 @@ const MODEL_PROVIDER_MAP = {
   // OpenAI
   "gpt-4o": "openai",
   "gpt-5-nano": "openai",
-
-  // Anthropic
-  "claude-3-5-sonnet": "anthropic",
-  "claude-3-opus": "anthropic",
-
-  // DeepSeek
-  "deepseek-chat": "deepseek",
-  "deepseek-coder": "deepseek",
 
   // xAI
   "grok-4-latest": "xai",
@@ -33,8 +23,6 @@ const MODEL_PROVIDER_MAP = {
 
 const providerHandlers = {
   openai: callOpenAIProvider,
-  anthropic: callAnthropicProvider,
-  deepseek: callDeepSeekProvider,
   xai: callXAIProvider,
   google: callGoogleProvider
 };
