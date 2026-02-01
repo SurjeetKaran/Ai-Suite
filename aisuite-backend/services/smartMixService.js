@@ -8,6 +8,7 @@ const { updateProviderUsage } = require("../utils/providerBalancer");
 const { callOpenAIProvider } = require("./providers/openaiProvider");
 const { callXAIProvider } = require("./providers/xaiProvider");
 const { callGoogleProvider } = require("./providers/googleProvider");
+const { callGroqProvider } = require("./providers/groqProvider");
 
 const MODEL_PROVIDER_MAP = {
   // OpenAI
@@ -18,13 +19,19 @@ const MODEL_PROVIDER_MAP = {
   "grok-4-latest": "xai",
 
   // Google Gemini
-  "gemini-2.0-flash": "google"
+  "gemini-2.0-flash": "google",
+
+  // Groq
+  "mixtral-8x7b-32768": "groq",
+  "llama-3-70b-8192": "groq",
+  "llama-3-8b-8192": "groq"
 };
 
 const providerHandlers = {
   openai: callOpenAIProvider,
   xai: callXAIProvider,
-  google: callGoogleProvider
+  google: callGoogleProvider,
+  groq: callGroqProvider
 };
 
 async function smartMix(
